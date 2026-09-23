@@ -9,13 +9,12 @@
 Подключитесь к вашему чистому серверу (Ubuntu 20.04 / 22.04 / 24.04 или Debian 11 / 12) по SSH и выполните:
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/dexxdd/custom-AI-VPS-tuner-/main/install.sh)
 ```
-*(Замените `YOUR_USERNAME/YOUR_REPO` на ваш логин и имя репозитория на GitHub)*
 
 Или альтернативный вариант с сохранением файла:
 ```bash
-curl -sSL https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/install.sh -o install.sh && sudo bash install.sh
+curl -sSL https://raw.githubusercontent.com/dexxdd/custom-AI-VPS-tuner-/main/install.sh -o install.sh && sudo bash install.sh
 ```
 
 ---
