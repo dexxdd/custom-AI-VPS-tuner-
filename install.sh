@@ -285,42 +285,23 @@ PY_ACL
   echo -e "${CLR_RED}│ Некорректный IP или CIDR. Введите 'all' или валидный IP-адрес.${CLR_RESET}"
   echo -e "${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 done
-PRESETS=('Tokyo|Kissa Studio|Specialty coffee|Japanese minimalism' 'Berlin|Bauhaus Lab|Architecture|Sustainable design' 'Paris|Atelier Lumiere|Botanical fragrances|Handcrafted scents')
-IFS='|' read -r DEF_CITY DEF_BRAND DEF_NICHE DEF_VIBE <<< "${PRESETS[RANDOM % ${#PRESETS[@]}]}"
 echo ""
 echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 3: САЙТ-ПРИКРЫТИЕ ДЛЯ МАСКИРОВКИ ${CLR_CYAN}]───────────────────────────────${CLR_RESET}"
 echo -e "${CLR_CYAN}│ ${CLR_WHITE}Выберите способ создания сайта на домене ${CLR_GREEN}$DOMAIN${CLR_RESET}:"
-echo -e "${CLR_CYAN}│   ${CLR_GREEN}[1] Сгенерировать с помощью ИИ (нейросеть Pollinations)${CLR_RESET}"
-echo -e "${CLR_CYAN}│       ${CLR_WHITE}Бесплатно, уникальный адаптивный сайт под выбранную тему/город.${CLR_RESET}"
-echo -e "${CLR_CYAN}│   ${CLR_YELLOW}[2] Использовать встроенный локальный шаблон${CLR_RESET}"
-echo -e "${CLR_CYAN}│       ${CLR_WHITE}Работает полностью автономно, стильный дизайн без запросов к ИИ.${CLR_RESET}"
-echo -e "${CLR_CYAN}│   ${CLR_MAGENTA}[3] Загрузить свой HTML-файл${CLR_RESET}"
-echo -e "${CLR_CYAN}│       ${CLR_WHITE}Использовать ваш собственный готовый файл с компьютера.${CLR_RESET}"
+echo -e "${CLR_CYAN}│   ${CLR_GREEN}[1] Премиальный адаптивный сайт (встроенный автономный генератор 2026)${CLR_RESET}"
+echo -e "${CLR_CYAN}│       ${CLR_WHITE}Мгновенно, автономно, выбор темы (IT, кофейня, история, архитектура...)${CLR_RESET}"
+echo -e "${CLR_CYAN}│   ${CLR_MAGENTA}[2] Загрузить свой HTML-файл (или ссылку на GitHub Raw)${CLR_RESET}"
+echo -e "${CLR_CYAN}│       ${CLR_WHITE}Использовать готовый файл /root/index.html или скачать по ссылке.${CLR_RESET}"
 echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 while true; do
   ask SITE_MODE 'Способ создания сайта [1]: '
   SITE_MODE=${SITE_MODE:-1}
   case "$SITE_MODE" in
-    1)
-      echo ""
-      echo -e "${CLR_BLUE}┌─── [${CLR_WHITE}${CLR_BOLD} НЕЙРОСЕТЬ POLLINATIONS ${CLR_BLUE}]─────────────────────────────────────────────${CLR_RESET}"
-      echo -e "${CLR_BLUE}│ ${CLR_GREEN}Генерация доступна БЕСПЛАТНО и СРАЗУ без ключей!${CLR_RESET}"
-      echo -e "${CLR_BLUE}│ ${CLR_WHITE}Если у вас есть платный API-ключ Pollinations — введите его.${CLR_RESET}"
-      echo -e "${CLR_BLUE}│ ${CLR_YELLOW}Либо просто нажмите [Enter] для бесплатной мгновенной генерации.${CLR_RESET}"
-      echo -e "${CLR_BLUE}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
-      echo -e "\n${CLR_CYAN}┌─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
-      echo -e "${CLR_CYAN}│ ${CLR_BOLD}${CLR_WHITE}API-ключ Pollinations (Enter — бесплатно без ключа):${CLR_RESET}"
-      printf "${CLR_CYAN}└─👉 ${CLR_YELLOW}${CLR_BOLD}Ввод: ${CLR_RESET}"
-      read -r -s POLLINATIONS_API_KEY </dev/tty || POLLINATIONS_API_KEY=''
-      echo ""
-      break
-      ;;
-    2) POLLINATIONS_API_KEY=''; break ;;
-    3) POLLINATIONS_API_KEY=''; break ;;
-    *) echo -e "${CLR_RED}Пожалуйста, введите 1, 2 или 3.${CLR_RESET}" ;;
+    1|2) break ;;
+    *) echo -e "${CLR_RED}Пожалуйста, введите 1 или 2.${CLR_RESET}" ;;
   esac
 done
-if [[ "$SITE_MODE" == 3 ]]; then
+if [[ "$SITE_MODE" == 2 ]]; then
   # Auto-detect any already uploaded HTML files on the server
   DEF_HTML="/root/index.html"
   FOUND_HTML=""
@@ -333,7 +314,7 @@ if [[ "$SITE_MODE" == 3 ]]; then
   done
 
   echo ""
-  echo -e "${CLR_MAGENTA}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 3: ЗАГРУЗКА ВАШЕГО HTML-САЙТА ${CLR_MAGENTA}]─────────────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 3: ВАШ HTML-САЙТ ${CLR_MAGENTA}]─────────────────────────────────────────${CLR_RESET}"
   echo -e "${CLR_MAGENTA}│ ${CLR_WHITE}Вы можете использовать любой из двух способов:${CLR_RESET}"
   echo -e "${CLR_MAGENTA}│${CLR_RESET}"
   echo -e "${CLR_MAGENTA}│ ${CLR_GREEN}${CLR_BOLD}СПОСОБ 1 (ЗАГРУЗКА ЧЕРЕЗ POWERSHELL С КОМПЬЮТЕРА):${CLR_RESET}"
@@ -390,19 +371,68 @@ if [[ "$SITE_MODE" == 3 ]]; then
   done
 else
   echo ""
+  echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ТЕМАТИКА САЙТА-ПРИКРЫТИЯ ${CLR_CYAN}]───────────────────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_CYAN}│ ${CLR_WHITE}Выберите направление для маскировочного сайта:${CLR_RESET}"
+  echo -e "${CLR_CYAN}│   ${CLR_GREEN}[1] IT & Cloud Solutions${CLR_WHITE} (веб-технологии, облачные платформы, SaaS)${CLR_RESET}"
+  echo -e "${CLR_CYAN}│   ${CLR_GREEN}[2] Specialty Coffee & Bakery${CLR_WHITE} (авторская кофейня, свежая выпечка)${CLR_RESET}"
+  echo -e "${CLR_CYAN}│   ${CLR_GREEN}[3] Архитектура и Дизайн${CLR_WHITE} (проектирование, эстетика пространств)${CLR_RESET}"
+  echo -e "${CLR_CYAN}│   ${CLR_GREEN}[4] История, Культура и Наследие${CLR_WHITE} (история, музеи, экспедиции, краеведение)${CLR_RESET}"
+  echo -e "${CLR_CYAN}│   ${CLR_GREEN}[5] Бизнес, Право и Аудит${CLR_WHITE} (юридический консалтинг, аудит)${CLR_RESET}"
+  echo -e "${CLR_CYAN}│   ${CLR_YELLOW}[6] Случайный авто-выбор${CLR_RESET}"
+  echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+  while true; do
+    ask THEME_CHOICE 'Тематика сайта [6]: '
+    THEME_CHOICE=${THEME_CHOICE:-6}
+    case "$THEME_CHOICE" in
+      1|2|3|4|5|6) break ;;
+      *) echo -e "${CLR_RED}Пожалуйста, выберите число от 1 до 6.${CLR_RESET}" ;;
+    esac
+  done
+  if [[ "$THEME_CHOICE" == 6 ]]; then
+    THEME_CHOICE=$(( (RANDOM % 5) + 1 ))
+  fi
+
+  case "$THEME_CHOICE" in
+    1)
+      DEF_CITY="Москва"
+      DEF_BRAND="Apex Cloud"
+      DEF_NICHE="Облачные сервисы и IT-инфраструктура"
+      DEF_VIBE="Отказоустойчивые цифровые решения и защита данных"
+      ;;
+    2)
+      DEF_CITY="Санкт-Петербург"
+      DEF_BRAND="Kissa Coffee"
+      DEF_NICHE="Specialty кофе и свежая авторская выпечка"
+      DEF_VIBE="Истинный вкус зерна, уют и атмосфера вдохновения"
+      ;;
+    3)
+      DEF_CITY="Берлин"
+      DEF_BRAND="Bauhaus Lab"
+      DEF_NICHE="Архитектурное бюро и дизайн среды"
+      DEF_VIBE="Чистая эстетика формы, свет и функциональность"
+      ;;
+    4)
+      DEF_CITY="Владикавказ"
+      DEF_BRAND="Alania Heritage"
+      DEF_NICHE="История, культура и историческое наследие"
+      DEF_VIBE="Древние башенные комплексы, архивы и вековые традиции"
+      ;;
+    5)
+      DEF_CITY="Москва"
+      DEF_BRAND="Vanguard Legal"
+      DEF_NICHE="Бизнес-консалтинг, аудит и правовая защита"
+      DEF_VIBE="Стратегическое сопровождение и безупречный комплаенс"
+      ;;
+  esac
+
+  echo ""
   echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ПАРАМЕТРЫ САЙТА ${CLR_CYAN}]────────────────────────────────────────────────────${CLR_RESET}"
-  echo -e "${CLR_CYAN}│ ${CLR_WHITE}Укажите данные для наполнения сайта (или нажмите ${CLR_BOLD}[Enter]${CLR_RESET}${CLR_CYAN} для авто-выбора):${CLR_RESET}"
+  echo -e "${CLR_CYAN}│ ${CLR_WHITE}Укажите данные сайта (или нажмите ${CLR_BOLD}[Enter]${CLR_RESET}${CLR_CYAN} для значений по умолчанию):${CLR_RESET}"
   echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
   ask CITY "Город [$DEF_CITY]: "; CITY=${CITY:-$DEF_CITY}
-  ask BRAND "Название [$DEF_BRAND]: "; BRAND=${BRAND:-$DEF_BRAND}
+  ask BRAND "Название бренда / компании [$DEF_BRAND]: "; BRAND=${BRAND:-$DEF_BRAND}
   ask NICHE "Сфера деятельности [$DEF_NICHE]: "; NICHE=${NICHE:-$DEF_NICHE}
-  ask VIBE "Ключевые слова / стиль [$DEF_VIBE]: "; VIBE=${VIBE:-$DEF_VIBE}
-fi
-if [[ -n "${POLLINATIONS_API_KEY:-}" ]]; then
-  ask AI_MODEL 'ID текстовой модели из каталога Pollinations [openai]: '
-  export AI_MODEL=${AI_MODEL:-openai}
-else
-  export AI_MODEL=openai
+  ask VIBE "Слоган / описание [$DEF_VIBE]: "; VIBE=${VIBE:-$DEF_VIBE}
 fi
 if [[ "$INSTALL_MODE" == 2 ]]; then
   echo ""
@@ -461,7 +491,7 @@ PY_NGINX_DOMAIN
 fi
 install -d -m 755 "$WEBROOT" "$ACME" "$ACME/.well-known" "$ACME/.well-known/acme-challenge"
 STAGE=site
-if [[ "$SITE_MODE" == 3 ]]; then
+if [[ "$SITE_MODE" == 2 ]]; then
   while true; do
   if python3 - "$HTML_SOURCE" "$WEBROOT/index.html" <<'PY_UPLOAD'
 import re, sys
@@ -488,313 +518,780 @@ PY_UPLOAD
   ask HTML_SOURCE 'Полный путь HTML на VPS: '
   done
 else
-POLLINATIONS_API_KEY="$POLLINATIONS_API_KEY" python3 - "$CITY" "$BRAND" "$NICHE" "$VIBE" "$WEBROOT/index.html" <<'PY_SITE'
-import sys, os, json, re, urllib.request, html, signal
+python3 - "$THEME_CHOICE" "$CITY" "$BRAND" "$NICHE" "$VIBE" "$DOMAIN" "$WEBROOT/index.html" <<'PY_SITE'
+import sys, html
 from datetime import datetime
 from pathlib import Path
 
-city = sys.argv[1].strip() if len(sys.argv) > 1 else "Tokyo"
-brand = sys.argv[2].strip() if len(sys.argv) > 2 else "Kissa Studio"
-niche = sys.argv[3].strip() if len(sys.argv) > 3 else "Specialty Coffee"
-vibe = sys.argv[4].strip() if len(sys.argv) > 4 else "Modern minimal"
+theme_idx = sys.argv[1].strip() if len(sys.argv) > 1 else "1"
+city = sys.argv[2].strip() if len(sys.argv) > 2 else "Москва"
+brand = sys.argv[3].strip() if len(sys.argv) > 3 else "Apex Cloud"
+niche = sys.argv[4].strip() if len(sys.argv) > 4 else "IT & Cloud Solutions"
+vibe = sys.argv[5].strip() if len(sys.argv) > 5 else "Отказоустойчивые цифровые решения и защита данных"
+domain = sys.argv[6].strip() if len(sys.argv) > 6 else "example.com"
+dest_path = Path(sys.argv[7].strip() if len(sys.argv) > 7 else "/var/www/site/index.html")
 
-ai_success = False
-html_content = ""
+is_cyrillic = any('\u0400' <= char <= '\u04FF' for char in f"{city} {brand} {niche} {vibe}")
+year = datetime.now().year
 
-prompt = (
-    f"Create a complete, modern, responsive single-page HTML5 website for a company named '{brand}'.\n"
-    f"Location / City: '{city}'.\n"
-    f"Industry / Niche: '{niche}'.\n"
-    f"Atmosphere / Brand Vibe: '{vibe}'.\n\n"
-    f"STRICT REQUIREMENTS:\n"
-    f"1. LANGUAGE: The entire website copy (page title, navigation menu, hero headline, about section, 3-4 feature/service cards, contact address, current-year copyright footer) MUST be written in the primary native/official language of the city '{city}' (for example: Japanese for Tokyo, German for Berlin, French for Paris, Italian for Rome, Spanish for Madrid, Russian for Russian cities, etc.).\n"
-    f"2. DESIGN: High-end, polished, responsive UI with modern CSS embedded inside <style>. Use clean typography (Inter or modern sans-serif), soft shadows, gradient accents, responsive flexbox/grid layout, smooth scrolling, and mobile responsiveness.\n"
-    f"3. ASSETS: Use CSS illustrations and inline styles. No JavaScript, forms, iframes, external scripts or tracking.\n"
-    f"4. CONTENT: Include city '{city}', no contact forms, no invented phone numbers or street addresses, no social links.\n"
-    f"5. OUTPUT FORMAT: Return ONLY the raw HTML code starting with <!DOCTYPE html> and ending with </html>. Do NOT include markdown blocks, backticks, or conversational text."
-)
+themes_ru = {
+    "1": {
+        "name": "IT & Cloud Solutions",
+        "primary": "#2563eb",
+        "primary_hover": "#1d4ed8",
+        "accent": "#06b6d4",
+        "dark": "#0f172a",
+        "bg": "#f8fafc",
+        "card_bg": "#ffffff",
+        "text": "#334155",
+        "text_muted": "#64748b",
+        "border": "#e2e8f0",
+        "badge": "💻 Высокие технологии и IT-инфраструктура",
+        "hero_title": "Надёжные цифровые решения для современного бизнеса",
+        "stats": [
+            ("99.98%", "Uptime сервисов"),
+            ("150+", "Успешных внедрений"),
+            ("< 15 мс", "Средний отклик"),
+            ("24/7", "Мониторинг систем")
+        ],
+        "services": [
+            ("Облачная инфраструктура", "Проектирование и развертывание отказоустойчивых виртуальных кластеров и частных сетей."),
+            ("Кибербезопасность", "Комплексный аудит периметра, защита от DDoS-атак и шифрование корпоративных каналов связи."),
+            ("DevOps и автоматизация", "CI/CD пайплайны, контейнеризация Docker/Kubernetes и оптимизация серверных мощностей."),
+            ("Инженерная поддержка", "Круглосуточный мониторинг, оперативное реагирование на инциденты и регулярные бэкапы.")
+        ],
+        "about_p1": f"Компания {brand} специализируется на проектировании, внедрении и сопровождении отказоустойчивых IT-систем в г. {city} и по всему миру.",
+        "about_p2": f"Наш приоритет — производительность, приватность и защита данных. {vibe}.",
+        "faq": [
+            ("Какие гарантии SLA предоставляются?", "Мы гарантируем доступность критических систем на уровне не менее 99.95% с фиксацией в договоре."),
+            ("Как осуществляется миграция сервисов?", "Миграция выполняется поэтапно без остановки основных рабочих процессов и с обязательным резервным копированием."),
+            ("Предоставляется ли круглосуточная поддержка?", "Да, дежурные инженеры осуществляют мониторинг и реагирование 24 часа в сутки 7 дней в неделю.")
+        ],
+        "icon_svg": '''<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>'''
+    },
+    "2": {
+        "name": "Specialty Coffee & Bakery",
+        "primary": "#b45309",
+        "primary_hover": "#92400e",
+        "accent": "#d97706",
+        "dark": "#291b12",
+        "bg": "#fefdfa",
+        "card_bg": "#ffffff",
+        "text": "#443428",
+        "text_muted": "#786558",
+        "border": "#f3ece4",
+        "badge": "☕ Авторский specialty кофе свежей обжарки",
+        "hero_title": "Место, где вкус и уют соединяются в каждой чашке",
+        "stats": [
+            ("100%", "Свежая арабика"),
+            ("12+", "Сортов моносорта"),
+            ("08:00", "Свежая выпечка"),
+            ("4.9 ★", "Оценка гостей")
+        ],
+        "services": [
+            ("Авторский кофе", "Зерно класса Specialty свежей обжарки, альтернативные способы заваривания и идеальный эспрессо."),
+            ("Ремесленная пекарня", "Хрустящие круассаны, крафтовый хлеб на живой закваске и свежие десерты каждое утро."),
+            ("Атмосферный коворкинг", "Удобные столы, розетки, быстрый Wi-Fi и мягкий свет для комфортной работы и спокойного чтения."),
+            ("Зерно домой и навынос", "Поможем подобрать сорт зерна под ваш способ заваривания и смолем прямо при вас.")
+        ],
+        "about_p1": f"Кофейня {brand} — это уютное городское пространство в г. {city}, созданное людьми, искренне влюбленными в культуру настоящего кофе.",
+        "about_p2": f"Мы закупаем зерна у проверенных фермеров, бережно обжариваем их и раскрываем уникальный вкусовой букет каждой партии. {vibe}.",
+        "faq": [
+            ("Есть ли у вас растительное молоко?", "Да, мы с удовольствием приготовим любой напиток на овсяном, миндальном, кокосовом или соевом молоке."),
+            ("Можно ли работать у вас с ноутбуком?", "Конечно! У нас предусмотрены удобные рабочие места с розетками и стабильный скоростной интернет."),
+            ("Проводятся ли у вас каппинги?", "Да, каждую субботу мы проводим открытые дегустации новых сортов для гостей кофейни.")
+        ],
+        "icon_svg": '''<path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3"/>'''
+    },
+    "3": {
+        "name": "Архитектура и Дизайн",
+        "primary": "#0f766e",
+        "primary_hover": "#115e59",
+        "accent": "#f97316",
+        "dark": "#18181b",
+        "bg": "#f9fafb",
+        "card_bg": "#ffffff",
+        "text": "#27272a",
+        "text_muted": "#71717a",
+        "border": "#e4e4e7",
+        "badge": "📐 Архитектурное бюро & студия дизайна",
+        "hero_title": "Проектируем эстетичные и функциональные пространства",
+        "stats": [
+            ("12 лет", "Успешной практики"),
+            ("80+", "Реализованных проектов"),
+            ("100%", "Авторский надзор"),
+            ("3D BIM", "Точность чертежей")
+        ],
+        "services": [
+            ("Архитектурное проектирование", "Полный комплект чертежей и инженерных решений для загородных домов и общественных зданий."),
+            ("Дизайн жилых интерьеров", "Гармоничные, эргономичные концепции квартир и резиденций с подбором реальных отделочных материалов."),
+            ("Коммерческие пространства", "Проектирование функциональных офисов, ресторанов и ритейл-зон с учетом клиентского пути."),
+            ("Авторский надзор", "Личный контроль архитекторов на стройплощадке, работа с подрядчиками до финальной сдачи объекта.")
+        ],
+        "about_p1": f"Бюро {brand} разрабатывает индивидуальные проекты в г. {city} и за его пределами. Мы исповедуем принципы чистой геометрии, естественного света и долговечных материалов.",
+        "about_p2": f"Каждый проект балансирует между смелой авторской эстетикой и бескомпромиссным комфортом жильцов. {vibe}.",
+        "faq": [
+            ("Сколько времени занимает создание проекта?", "В среднем дизайн-проект занимает от 1.5 до 3 месяцев в зависимости от площади и сложности."),
+            ("Предоставляется ли смета на реализацию?", "Да, мы формируем подробную спецификацию материалов, мебели и оборудования с реальными артикулами."),
+            ("Работаете ли вы с удаленными объектами?", "Да, мы ведем проектирование дистанционно и выезжаем на ключевые этапы авторского надзора.")
+        ],
+        "icon_svg": '''<path d="M3 21h18M5 21V7l8-4v18M13 21V3l6 4v14M9 9h1M9 13h1M9 17h1M15 9h1M15 13h1M15 17h1"/>'''
+    },
+    "4": {
+        "name": "История, Культура и Наследие",
+        "primary": "#15803d",
+        "primary_hover": "#166534",
+        "accent": "#ca8a04",
+        "dark": "#0f172a",
+        "bg": "#f8fafc",
+        "card_bg": "#ffffff",
+        "text": "#334155",
+        "text_muted": "#64748b",
+        "border": "#e2e8f0",
+        "badge": "🏛️ Историко-культурный исследовательский портал",
+        "hero_title": "Сохраняя великое наследие веков для будущих поколений",
+        "stats": [
+            ("1000+", "Исторических документов"),
+            ("45+", "Экспедиций и раскопок"),
+            ("25+", "Опубликованных трудов"),
+            ("100%", "Открытый доступ")
+        ],
+        "services": [
+            ("Архивные исследования", "Поиск, оцифровка и академический анализ редких исторических документов и свидетельств."),
+            ("Археологические экспедиции", "Полевые работы, картографирование древних поселений, святилищ и башенных комплексов."),
+            ("Культурно-просветительские программы", "Лектории, выставки, интерактивные виртуальные туры и научные публикации для широкой аудитории."),
+            ("Экспертиза и реставрация", "Консультации по сохранению объектов культурного наследия и традиционного зодчества.")
+        ],
+        "about_p1": f"Проект {brand} посвящен глубокому изучению, систематизации и популяризации богатой истории и материальной культуры региона ({city}).",
+        "about_p2": f"Мы объединяем историков, археологов, краеведов и энтузиастов. Наша цель — бережно передать уникальные традиции и память предков. {vibe}.",
+        "faq": [
+            ("Как получить доступ к архивным материалам?", "Все открытые оцифрованные фонды доступны в электронном каталоге библиотеки проекта."),
+            ("Можно ли предложить свои материалы для публикации?", "Да, мы приветствуем семейные архивы, воспоминания и фотографии с проверкой подлинности."),
+            ("Проводятся ли экскурсии по историческим местам?", "Да, наши специалисты регулярно организуют историко-познавательные маршруты.")
+        ],
+        "icon_svg": '''<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15zM8 7h8M8 11h6"/>'''
+    },
+    "5": {
+        "name": "Бизнес, Право и Аудит",
+        "primary": "#1e40af",
+        "primary_hover": "#1e3a8a",
+        "accent": "#0284c7",
+        "dark": "#0f172a",
+        "bg": "#f8fafc",
+        "card_bg": "#ffffff",
+        "text": "#334155",
+        "text_muted": "#64748b",
+        "border": "#e2e8f0",
+        "badge": "⚖️ Экспертный консалтинг и правовая защита",
+        "hero_title": "Надёжное юридическое сопровождение и аудит вашего бизнеса",
+        "stats": [
+            ("15+ лет", "Безупречной репутации"),
+            ("98%", "Выигранных дел"),
+            ("500+", "Корпоративных клиентов"),
+            ("100%", "Конфиденциальность")
+        ],
+        "services": [
+            ("Комплексный правовой аудит", "Всесторонняя проверка договоров, корпоративной структуры и снижение юридических рисков."),
+            ("Налоговый консалтинг", "Законная оптимизация налогообложения, аудит отчетности и защита при проверках."),
+            ("Арбитражная практика", "Профессиональное представительство интересов компании в судебных спорах любой сложности."),
+            ("Сопровождение сделок", "Юридическая чистота сделок M&A, инвестиционных раундов и приобретения активов.")
+        ],
+        "about_p1": f"Консалтинговая группа {brand} предоставляет комплексные решения для бизнеса в г. {city}. Мы защищаем активы и обеспечиваем устойчивое развитие компаний.",
+        "about_p2": f"Индивидуальный подход, глубокая отраслевая экспертиза и строгая конфиденциальность — основа нашей работы. {vibe}.",
+        "faq": [
+            ("Как соблюдается конфиденциальность?", "Мы подписываем соглашение NDA до начала ознакомления с документами клиента."),
+            ("Возможна ли работа по фиксированной абонентской плате?", "Да, мы предлагаем удобные пакеты абонентского юридического аутсорсинга."),
+            ("Как быстро вы приступаете к работе по делу?", "Первичный анализ документов проводится в течение 24 часов после обращения.")
+        ],
+        "icon_svg": '''<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>'''
+    }
+}
 
-def ai_deadline(signum, frame):
-    raise TimeoutError("Превышено общее время запроса ИИ")
+themes_en = {
+    "1": {
+        "name": "IT & Cloud Solutions",
+        "primary": "#2563eb",
+        "primary_hover": "#1d4ed8",
+        "accent": "#06b6d4",
+        "dark": "#0f172a",
+        "bg": "#f8fafc",
+        "card_bg": "#ffffff",
+        "text": "#334155",
+        "text_muted": "#64748b",
+        "border": "#e2e8f0",
+        "badge": "💻 High-Performance Cloud Infrastructure",
+        "hero_title": "Empowering Modern Enterprises with Resilient Systems",
+        "stats": [
+            ("99.98%", "Service Uptime"),
+            ("150+", "Global Deployments"),
+            ("< 15 ms", "Avg Latency"),
+            ("24/7", "Active Monitoring")
+        ],
+        "services": [
+            ("Cloud Architecture", "Architecting and deploying fault-tolerant multi-region clusters and private networks."),
+            ("Cybersecurity", "Comprehensive perimeter audits, DDoS mitigation, and enterprise traffic encryption."),
+            ("DevOps & Automation", "Continuous integration pipelines, Kubernetes containerization, and cost optimization."),
+            ("Engineering Support", "Round-the-clock telemetry, automated recovery, and proactive data backup.")
+        ],
+        "about_p1": f"{brand} delivers mission-critical IT infrastructure and high-availability digital solutions in {city} and worldwide.",
+        "about_p2": f"Our core engineering pillars are performance, security, and data integrity. {vibe}.",
+        "faq": [
+            ("What SLA guarantees do you provide?", "We offer a contract-backed 99.95% minimum uptime SLA for all core services."),
+            ("How is migration handled?", "Migrations are executed incrementally with zero downtime and automated rollbacks."),
+            ("Is round-the-clock support included?", "Yes, dedicated on-call engineers monitor system health 24 hours a day, 7 days a week.")
+        ],
+        "icon_svg": '''<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>'''
+    },
+    "2": {
+        "name": "Specialty Coffee & Bakery",
+        "primary": "#b45309",
+        "primary_hover": "#92400e",
+        "accent": "#d97706",
+        "dark": "#291b12",
+        "bg": "#fefdfa",
+        "card_bg": "#ffffff",
+        "text": "#443428",
+        "text_muted": "#786558",
+        "border": "#f3ece4",
+        "badge": "☕ Freshly Roasted Specialty Coffee",
+        "hero_title": "Crafting Extraordinary Moments in Every Single Cup",
+        "stats": [
+            ("100%", "Single-Origin Arabica"),
+            ("12+", "Rotating Origins"),
+            ("08:00", "Warm Baked Goods"),
+            ("4.9 ★", "Guest Rating")
+        ],
+        "services": [
+            ("Artisan Espresso", "Precision-roasted single-origin beans, pour-over bars, and velvety flat whites."),
+            ("Craft Bakery", "Warm morning croissants, artisanal sourdough bread, and signature pastries baked daily."),
+            ("Inspiring Space", "Thoughtfully designed seating, high-speed Wi-Fi, and natural light for creative work."),
+            ("Beans & Brew Gear", "Curated retail beans roasted this week with grind options for your home brewing setup.")
+        ],
+        "about_p1": f"{brand} is an intimate neighborhood coffee studio in {city}, born from a deep devotion to specialty coffee craft.",
+        "about_p2": f"We partner directly with sustainable coffee farms, honoring each bean's origin profile. {vibe}.",
+        "faq": [
+            ("Do you serve plant-based milks?", "Yes, we proudly steam oat, almond, coconut, and soy milks with no extra charge."),
+            ("Is laptop work welcome?", "Absolutely. We offer dedicated workspaces with power outlets and fast fiber internet."),
+            ("Do you host public cuppings?", "Yes, we hold open public tasting sessions every Saturday at 11:00 AM.")
+        ],
+        "icon_svg": '''<path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3"/>'''
+    },
+    "3": {
+        "name": "Architecture & Spatial Design",
+        "primary": "#0f766e",
+        "primary_hover": "#115e59",
+        "accent": "#f97316",
+        "dark": "#18181b",
+        "bg": "#f9fafb",
+        "card_bg": "#ffffff",
+        "text": "#27272a",
+        "text_muted": "#71717a",
+        "border": "#e4e4e7",
+        "badge": "📐 Architectural Studio & Spatial Design",
+        "hero_title": "Designing Purposeful, Timeless Architecture",
+        "stats": [
+            ("12 Years", "Design Practice"),
+            ("80+", "Completed Buildings"),
+            ("100%", "Site Supervision"),
+            ("BIM", "Full Precision")
+        ],
+        "services": [
+            ("Architectural Design", "Comprehensive conceptual planning, engineering integration, and permit documentation."),
+            ("Interior Architecture", "Refined residential interiors celebrating natural light, tactile textures, and bespoke joinery."),
+            ("Commercial Spaces", "High-performance offices, hospitality spaces, and brand flagships designed for workflow."),
+            ("Construction Oversight", "Rigorous on-site quality assurance from foundation to final occupancy turnover.")
+        ],
+        "about_p1": f"Based in {city}, {brand} creates contextual architecture that harmonizes structure, landscape, and human experience.",
+        "about_p2": f"We believe true luxury lies in simplicity, honest materials, and spatial clarity. {vibe}.",
+        "faq": [
+            ("How long does an architecture project take?", "Full schematic and technical design typically spans 2 to 4 months depending on scale."),
+            ("Do you assist with construction tendering?", "Yes, we prepare full contractor bid documentation and evaluate vendor tenders."),
+            ("Do you take international projects?", "Yes, we collaborate globally using modern BIM workflows and on-site milestone reviews.")
+        ],
+        "icon_svg": '''<path d="M3 21h18M5 21V7l8-4v18M13 21V3l6 4v14M9 9h1M9 13h1M9 17h1M15 9h1M15 13h1M15 17h1"/>'''
+    },
+    "4": {
+        "name": "History, Culture & Heritage",
+        "primary": "#15803d",
+        "primary_hover": "#166534",
+        "accent": "#ca8a04",
+        "dark": "#0f172a",
+        "bg": "#f8fafc",
+        "card_bg": "#ffffff",
+        "text": "#334155",
+        "text_muted": "#64748b",
+        "border": "#e2e8f0",
+        "badge": "🏛️ Historical Research & Heritage Initiative",
+        "hero_title": "Preserving Ancient Cultural Heritage for the Future",
+        "stats": [
+            ("1000+", "Digitized Records"),
+            ("45+", "Field Expeditions"),
+            ("25+", "Academic Monographs"),
+            ("100%", "Open Access")
+        ],
+        "services": [
+            ("Archival Preservation", "High-resolution digitization, scholarly transcription, and linguistic analysis of historical documents."),
+            ("Archaeological Expeditions", "Topographical surveys, non-invasive lidar mapping, and archaeological site documentation."),
+            ("Public Education", "Interactive virtual exhibits, academic seminars, and open educational publications."),
+            ("Monuments Conservation", "Expert consultancy for the stabilization and ethical restoration of ancient vernacular structures.")
+        ],
+        "about_p1": f"{brand} is an independent research platform based in {city}, dedicated to uncovering and safeguarding regional cultural heritage.",
+        "about_p2": f"Our mission bridges centuries of memory, tradition, and living identity. {vibe}.",
+        "faq": [
+            ("Are research archives accessible to the public?", "Yes, all our open digital archives are freely accessible to students and researchers."),
+            ("Can I submit archival material for review?", "We warmly welcome family records, photographs, and oral histories for academic review."),
+            ("Do you organize educational guided tours?", "Yes, our researchers lead seasonal educational tours across historic landmarks.")
+        ],
+        "icon_svg": '''<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15zM8 7h8M8 11h6"/>'''
+    },
+    "5": {
+        "name": "Corporate Law, Advisory & Audit",
+        "primary": "#1e40af",
+        "primary_hover": "#1e3a8a",
+        "accent": "#0284c7",
+        "dark": "#0f172a",
+        "bg": "#f8fafc",
+        "card_bg": "#ffffff",
+        "text": "#334155",
+        "text_muted": "#64748b",
+        "border": "#e2e8f0",
+        "badge": "⚖️ Strategic Legal Advisory & Corporate Audit",
+        "hero_title": "Protecting Enterprise Value with Uncompromising Rigor",
+        "stats": [
+            ("15+ Years", "Established Reputation"),
+            ("98%", "Favorable Resolution"),
+            ("500+", "Corporate Clients"),
+            ("100%", "Strict Confidentiality")
+        ],
+        "services": [
+            ("Corporate Due Diligence", "Meticulous legal risk assessment, transactional compliance, and structural asset security."),
+            ("Tax & Regulatory Advisory", "Defensible international tax positioning, transfer pricing audits, and statutory filings."),
+            ("Commercial Litigation", "High-stakes arbitration advocacy across regional and federal commercial courts."),
+            ("M&A Advisory", "Turnkey negotiation, contract drafting, and regulatory clearances for mergers and acquisitions.")
+        ],
+        "about_p1": f"{brand} provides strategic counsel and corporate defense to growing and established companies in {city} and across international borders.",
+        "about_p2": f"We combine deep commercial acumen with uncompromising discretion and integrity. {vibe}.",
+        "faq": [
+            ("How do you guarantee confidentiality?", "We execute binding Non-Disclosure Agreements prior to reviewing any sensitive client matter."),
+            ("Do you offer monthly retained legal services?", "Yes, our corporate retainer packages provide predictable legal coverage and dedicated counsel."),
+            ("How promptly can you start a matter?", "Initial legal risk assessments are delivered within 24 business hours.")
+        ],
+        "icon_svg": '''<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>'''
+    }
+}
 
-try:
-    if hasattr(signal, "SIGALRM"):
-        signal.signal(signal.SIGALRM, ai_deadline)
-        signal.alarm(120)
-    key = os.environ.get("POLLINATIONS_API_KEY", "").strip()
-    if key:
-        url = "https://gen.pollinations.ai/v1/chat/completions"
-        payload = json.dumps({
-            "messages": [
-                {"role": "system", "content": "You are an expert front-end web developer. You return ONLY valid raw HTML5 code starting with <!DOCTYPE html> and ending with </html>. Never use markdown code blocks or explanations."},
-                {"role": "user", "content": prompt}
-            ],
-            "model": os.environ.get("AI_MODEL", "openai")
-        }).encode("utf-8")
+t = (themes_ru if is_cyrillic else themes_en).get(str(theme_idx), (themes_ru if is_cyrillic else themes_en)["1"])
 
-        req = urllib.request.Request(url, data=payload, headers={
-            "Content-Type": "application/json", "Authorization": "Bearer " + key, "User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=45) as resp:
-            raw = resp.read(2_000_001)
-            if len(raw) > 2_000_000:
-                raise ValueError("Ответ ИИ слишком большой")
-            result = json.loads(raw)
-            cleaned = result["choices"][0]["message"]["content"].strip()
-    else:
-        url = "https://text.pollinations.ai/"
-        payload = json.dumps({
-            "messages": [
-                {"role": "system", "content": "You are an expert front-end web developer. You return ONLY valid raw HTML5 code starting with <!DOCTYPE html> and ending with </html>. Never use markdown code blocks or explanations."},
-                {"role": "user", "content": prompt}
-            ],
-            "model": "openai"
-        }).encode("utf-8")
+# UI labels
+lbl_services = "Услуги" if is_cyrillic else "Services"
+lbl_about = "О нас" if is_cyrillic else "About"
+lbl_faq = "Вопросы" if is_cyrillic else "FAQ"
+lbl_contact_btn = "Связаться" if is_cyrillic else "Get in Touch"
+lbl_hero_btn1 = "Наши направления" if is_cyrillic else "Our Services"
+lbl_hero_btn2 = "Контакты и адрес" if is_cyrillic else "Contact Info"
+lbl_sec_services_tag = "Направления деятельности" if is_cyrillic else "Core Capabilities"
+lbl_sec_services_h2 = "Ключевые преимущества и сервис" if is_cyrillic else "Excellence & Premium Service"
+lbl_sec_services_p = "Профессиональный подход, внимание к деталям и соблюдение высоких стандартов качества" if is_cyrillic else "Dedicated craftsmanship, transparent communication, and meticulous attention to detail"
+lbl_sec_about_tag = "О проекте" if is_cyrillic else "Company Overview"
+lbl_sec_about_h2 = f"{brand} в г. {city}" if is_cyrillic else f"{brand} in {city}"
+lbl_box_contact_h3 = "Контакты и режим работы" if is_cyrillic else "Location & Hours"
+lbl_row_loc = "Локация:" if is_cyrillic else "Location:"
+lbl_row_loc_val = f"г. {city}, Центральный район" if is_cyrillic else f"{city}, Central District"
+lbl_row_hours = "Режим работы:" if is_cyrillic else "Working Hours:"
+lbl_row_hours_val = "Пн–Вс с 09:00 до 20:00" if is_cyrillic else "Mon–Sun from 09:00 to 20:00"
+lbl_row_email = "Электронная почта:" if is_cyrillic else "Email:"
+lbl_row_web = "Официальный портал:" if is_cyrillic else "Official Portal:"
+lbl_sec_faq_tag = "Часто задаваемые вопросы" if is_cyrillic else "Frequently Asked Questions"
+lbl_sec_faq_h2 = "Ответы на популярные вопросы" if is_cyrillic else "Common Questions Answered"
+lbl_sec_faq_p = "Всё, что вам необходимо знать о нашей работе и условиях сотрудничества" if is_cyrillic else "Key information regarding our operations, terms, and client guarantees"
+lbl_footer_rights = f"© {year} {brand} ({city}). Все права защищены." if is_cyrillic else f"© {year} {brand} ({city}). All rights reserved."
+lbl_footer_desc = "Официальный информационный сайт компании." if is_cyrillic else "Official company informational portal."
 
-        req = urllib.request.Request(url, data=payload, headers={
-            "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=45) as resp:
-            raw = resp.read(2_000_001)
-            if len(raw) > 2_000_000:
-                raise ValueError("Ответ ИИ слишком большой")
-            cleaned = raw.decode("utf-8", errors="replace").strip()
+services_html = ""
+for title, desc in t["services"]:
+    services_html += f"""
+        <div class="card">
+            <div class="icon-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    {t["icon_svg"]}
+                </svg>
+            </div>
+            <h3>{html.escape(title)}</h3>
+            <p>{html.escape(desc)}</p>
+        </div>"""
 
-    cleaned = re.sub(r'^```(?:html)?\s*', '', cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r'\s*```$', '', cleaned).strip()
-    if "<html" in cleaned.lower():
-        if "</html>" not in cleaned.lower():
-            cleaned += "\n</body>\n</html>"
-        cleaned = re.sub(r'(?is)<script\b[^>]*>.*?</script>', '', cleaned)
-        cleaned = re.sub(r'(?is)<iframe\b[^>]*>.*?</iframe>', '', cleaned)
-        html_content = cleaned
-        ai_success = True
-        print("[+] Сайт сгенерирован нейросетью!")
-    else:
-        raise ValueError("В ответе нейросети отсутствует тег <html")
-except Exception as e:
-    print(f"[!] Внимание: шлюз ИИ временно недоступен ({type(e).__name__}). Активирован встроенный генератор...")
+stats_html = ""
+for num, lbl in t["stats"]:
+    stats_html += f"""
+        <div class="stat-item">
+            <div class="stat-number">{html.escape(num)}</div>
+            <div class="stat-label">{html.escape(lbl)}</div>
+        </div>"""
 
-finally:
-    if hasattr(signal, "SIGALRM"):
-        signal.alarm(0)
+faq_html = ""
+for q, a in t["faq"]:
+    faq_html += f"""
+        <details class="faq-item">
+            <summary>{html.escape(q)}</summary>
+            <div class="faq-body">{html.escape(a)}</div>
+        </details>"""
 
-if not ai_success or not html_content:
-    is_cyrillic = any('\u0400' <= char <= '\u04FF' for char in f"{city} {brand} {niche} {vibe}")
-    
-    if is_cyrillic:
-        lang = "ru"
-        nav_services = "Услуги"
-        nav_about = "О компании"
-        nav_contact = "Контакты"
-        btn_contact = "Связаться с нами"
-        sec_services_title = "Наши услуги и преимущества"
-        sec_services_sub = "Безупречные стандарты и индивидуальный подход"
-        card1_t = "Высокое качество"
-        card1_d = f"Каждый проект компании {brand} создается с вниманием к мельчайшим деталям."
-        card2_t = "Надежность и опыт"
-        card2_d = f"Проверенная репутация в г. {city} и строгое следование вашим пожеланиям."
-        card3_t = "Индивидуальный сервис"
-        card3_d = "Персональный менеджер, прозрачные условия сотрудничества и честные цены."
-        about_title = f"О компании {brand}"
-        about_text1 = f"Мы развиваем направление «{niche}» в г. {city}, объединяя многолетний опыт, современный подход и ценности: {vibe}."
-        about_text2 = "Наша миссия — превосходить ожидания и создавать продукт, которым мы гордимся каждый день."
-        contact_title = "Локация и график"
-        contact_addr = f"📍 г. {city}"
-        contact_hours = "🕒 Пн-Вс: 09:00 — 21:00"
-        contact_phone = "Контактная информация уточняется"
-        footer_copy = f"© {datetime.now().year} {brand} ({city}). Все права защищены."
-        footer_sub = "Информационная страница."
-    else:
-        lang = "en"
-        nav_services = "Services"
-        nav_about = "About Us"
-        nav_contact = "Contact"
-        btn_contact = "Get in Touch"
-        sec_services_title = "Signature Services & Excellence"
-        sec_services_sub = "Designed for those who appreciate true craft and dedication"
-        card1_t = "Premium Quality"
-        card1_d = f"Every creation at {brand} embodies perfection and modern craft."
-        card2_t = "Authentic Heritage"
-        card2_d = f"Proudly serving {city} with genuine passion and community trust."
-        card3_t = "Bespoke Experience"
-        card3_d = "Tailored solutions, seamless service, and unmatched customer care."
-        about_title = f"About {brand}"
-        about_text1 = f"Specializing in {niche} in {city}, we blend time-tested mastery with modern vision: {vibe}."
-        about_text2 = "Our philosophy is built on excellence, sustainability, and creating memorable experiences for our guests and partners."
-        contact_title = "Location & Hours"
-        contact_addr = f"📍 {city}"
-        contact_hours = "🕒 Mon-Sun: 09:00 — 21:00"
-        contact_phone = f"Contact details coming soon"
-        footer_copy = f"© {datetime.now().year} {brand} ({city}). All rights reserved."
-        footer_sub = "Information page."
+lang_code = "ru" if is_cyrillic else "en"
 
-    html_content = f'''<!DOCTYPE html>
-<html lang="{lang}">
+html_code = f"""<!DOCTYPE html>
+<html lang="{lang_code}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{html.escape(brand)} — {html.escape(niche)} ({html.escape(city)})</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {{
-            --primary: #2563eb;
-            --primary-dark: #1d4ed8;
-            --accent: #38bdf8;
-            --dark: #0f172a;
-            --bg: #f8fafc;
-            --card-bg: #ffffff;
-            --text: #334155;
-            --text-dark: #0f172a;
-            --border: #e2e8f0;
+            --primary: {t["primary"]};
+            --primary-hover: {t["primary_hover"]};
+            --accent: {t["accent"]};
+            --dark: {t["dark"]};
+            --bg: {t["bg"]};
+            --card-bg: {t["card_bg"]};
+            --text: {t["text"]};
+            --text-muted: {t["text_muted"]};
+            --border: {t["border"]};
         }}
-        * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: 'Plus Jakarta Sans', sans-serif; }}
-        body {{ background-color: var(--bg); color: var(--text); line-height: 1.6; overflow-x: hidden; }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        html {{ scroll-behavior: smooth; }}
+        body {{
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }}
         header {{
-            position: fixed; top: 0; left: 0; right: 0; background: rgba(255, 255, 255, 0.92);
-            backdrop-filter: blur(12px); z-index: 100; border-bottom: 1px solid var(--border);
+            position: fixed; top: 0; left: 0; right: 0;
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            z-index: 1000;
+            border-bottom: 1px solid var(--border);
+            transition: all 0.3s ease;
         }}
-        .nav-container {{
-            max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between;
-            align-items: center; padding: 1.1rem 2rem;
+        .header-inner {{
+            max-width: 1200px; margin: 0 auto;
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 1.1rem 2rem;
         }}
-        .logo {{ font-size: 1.35rem; font-weight: 800; color: var(--text-dark); text-decoration: none; letter-spacing: -0.5px; }}
-        .logo span {{ color: var(--primary); }}
-        .nav-links {{ display: flex; gap: 2rem; list-style: none; }}
-        .nav-links a {{ text-decoration: none; color: var(--text); font-weight: 500; font-size: 0.95rem; transition: color 0.2s; }}
-        .nav-links a:hover {{ color: var(--primary); }}
+        .logo {{
+            font-size: 1.35rem; font-weight: 800; color: var(--dark);
+            text-decoration: none; letter-spacing: -0.5px;
+            display: flex; align-items: center; gap: 0.5rem;
+        }}
+        .logo-dot {{
+            width: 9px; height: 9px; background: var(--primary);
+            border-radius: 50%; display: inline-block;
+        }}
+        nav ul {{ display: flex; gap: 2rem; list-style: none; align-items: center; }}
+        nav a {{
+            text-decoration: none; color: var(--text);
+            font-weight: 500; font-size: 0.95rem; transition: color 0.2s;
+        }}
+        nav a:hover {{ color: var(--primary); }}
+        .btn-sm {{
+            background: var(--primary); color: #fff !important;
+            padding: 0.55rem 1.25rem; border-radius: 9999px;
+            font-size: 0.88rem !important; font-weight: 600 !important;
+            transition: all 0.2s ease !important;
+        }}
+        .btn-sm:hover {{ background: var(--primary-hover); transform: translateY(-1px); }}
+        
         .hero {{
-            padding: 9rem 2rem 6rem; max-width: 1100px; margin: 0 auto; text-align: center;
+            padding: 9.5rem 2rem 5rem;
+            max-width: 1100px; margin: 0 auto; text-align: center;
+            position: relative;
         }}
-        .badge {{
-            display: inline-block; background: #eff6ff; color: var(--primary); padding: 0.4rem 1.2rem;
-            border-radius: 9999px; font-size: 0.85rem; font-weight: 600; margin-bottom: 1.5rem;
-            border: 1px solid #dbeafe;
+        .hero-badge {{
+            display: inline-flex; align-items: center; gap: 0.5rem;
+            background: #ffffff; color: var(--text);
+            padding: 0.45rem 1.2rem; border-radius: 9999px;
+            font-size: 0.85rem; font-weight: 600; margin-bottom: 1.75rem;
+            border: 1px solid var(--border);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.03);
         }}
         .hero h1 {{
-            font-size: 3.2rem; color: var(--text-dark); margin-bottom: 1.25rem;
-            font-weight: 800; line-height: 1.15; letter-spacing: -1px;
+            font-size: 3.4rem; color: var(--dark);
+            font-weight: 800; line-height: 1.15; letter-spacing: -1.2px;
+            margin-bottom: 1.35rem;
         }}
-        .hero p {{ font-size: 1.3rem; max-width: 720px; margin: 0 auto 2.5rem; color: #64748b; font-weight: 400; }}
-        .btn {{
-            display: inline-block; background: var(--primary); color: #fff; padding: 0.95rem 2.4rem;
-            border-radius: 9999px; text-decoration: none; font-weight: 600; font-size: 1.05rem;
-            box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.4); transition: all 0.25s ease;
+        .hero-sub {{
+            font-size: 1.25rem; max-width: 760px; margin: 0 auto 2.5rem;
+            color: var(--text-muted); font-weight: 400; line-height: 1.6;
         }}
-        .btn:hover {{ background: var(--primary-dark); transform: translateY(-2px); box-shadow: 0 15px 30px -5px rgba(37, 99, 235, 0.5); }}
-        .section {{ max-width: 1200px; margin: 0 auto; padding: 5rem 2rem; }}
-        .section-title {{ text-align: center; margin-bottom: 3.5rem; }}
-        .section-title h2 {{ font-size: 2.3rem; color: var(--text-dark); margin-bottom: 0.75rem; font-weight: 800; letter-spacing: -0.5px; }}
-        .section-title p {{ color: #64748b; font-size: 1.1rem; }}
-        .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 2rem; }}
-        .card {{
-            background: var(--card-bg); padding: 2.5rem; border-radius: 1.25rem;
-            border: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
+        .hero-actions {{ display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }}
+        .btn-primary {{
+            background: var(--primary); color: #fff;
+            padding: 0.95rem 2.2rem; border-radius: 9999px;
+            text-decoration: none; font-weight: 600; font-size: 1rem;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.15);
             transition: all 0.25s ease;
         }}
-        .card:hover {{ transform: translateY(-5px); box-shadow: 0 20px 25px -5px rgba(0,0,0,0.06); border-color: #cbd5e1; }}
-        .card h3 {{ font-size: 1.35rem; margin-bottom: 1rem; color: var(--text-dark); font-weight: 700; }}
-        .card p {{ color: #64748b; font-size: 1rem; line-height: 1.6; }}
-        .about-box {{
-            background: #fff; border-radius: 1.5rem; padding: 3.5rem;
-            border: 1px solid var(--border);
-            display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 3.5rem; align-items: center;
-            box-shadow: 0 10px 20px -5px rgba(0,0,0,0.04);
+        .btn-primary:hover {{
+            background: var(--primary-hover); transform: translateY(-2px);
+            box-shadow: 0 15px 30px -5px rgba(0,0,0,0.25);
         }}
-        .info-card {{
-            background: #f8fafc; border-radius: 1.25rem; padding: 2.2rem;
+        .btn-secondary {{
+            background: #fff; color: var(--text);
+            padding: 0.95rem 2.2rem; border-radius: 9999px;
+            text-decoration: none; font-weight: 600; font-size: 1rem;
+            border: 1px solid var(--border); transition: all 0.2s ease;
+        }}
+        .btn-secondary:hover {{ background: #f1f5f9; color: var(--dark); }}
+
+        .stats-bar {{
+            max-width: 1100px; margin: 2rem auto 5rem;
+            background: #ffffff; border: 1px solid var(--border);
+            border-radius: 1.5rem; padding: 2.2rem;
+            display: grid; grid-template-columns: repeat(4, 1fr);
+            gap: 1.5rem; text-align: center;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
+        }}
+        .stat-number {{
+            font-size: 2.2rem; font-weight: 800; color: var(--primary);
+            letter-spacing: -1px; margin-bottom: 0.35rem;
+        }}
+        .stat-label {{ font-size: 0.88rem; color: var(--text-muted); font-weight: 500; }}
+
+        .section {{ max-width: 1200px; margin: 0 auto; padding: 4.5rem 2rem; }}
+        .section-header {{ text-align: center; margin-bottom: 3.5rem; }}
+        .section-tag {{
+            color: var(--primary); font-size: 0.85rem; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 1px; margin-bottom: 0.5rem;
+        }}
+        .section-header h2 {{
+            font-size: 2.3rem; color: var(--dark);
+            font-weight: 800; letter-spacing: -0.6px; margin-bottom: 0.75rem;
+        }}
+        .section-header p {{ color: var(--text-muted); font-size: 1.1rem; max-width: 650px; margin: 0 auto; }}
+
+        .grid-cards {{
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 1.75rem;
+        }}
+        .card {{
+            background: var(--card-bg); border-radius: 1.25rem; padding: 2.25rem;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
+            transition: all 0.25s ease;
+        }}
+        .card:hover {{
+            transform: translateY(-4px);
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.05);
+            border-color: #cbd5e1;
+        }}
+        .icon-wrap {{
+            width: 48px; height: 48px; border-radius: 12px;
+            background: rgba(37, 99, 235, 0.08); color: var(--primary);
+            display: flex; align-items: center; justify-content: center;
+            margin-bottom: 1.5rem;
+        }}
+        .icon-wrap svg {{ width: 24px; height: 24px; }}
+        .card h3 {{
+            font-size: 1.25rem; color: var(--dark);
+            font-weight: 700; margin-bottom: 0.75rem;
+        }}
+        .card p {{ color: var(--text-muted); font-size: 0.96rem; line-height: 1.6; }}
+
+        .about-wrap {{
+            background: #ffffff; border-radius: 1.75rem; padding: 3.5rem;
+            border: 1px solid var(--border);
+            display: grid; grid-template-columns: 1.3fr 0.9fr; gap: 3.5rem;
+            align-items: center;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.03);
+        }}
+        .about-content h2 {{
+            font-size: 2.2rem; color: var(--dark); font-weight: 800;
+            margin-bottom: 1.25rem; letter-spacing: -0.5px;
+        }}
+        .about-content p {{
+            color: var(--text-muted); font-size: 1.05rem;
+            margin-bottom: 1.25rem; line-height: 1.7;
+        }}
+        .contact-box {{
+            background: var(--bg); border-radius: 1.25rem; padding: 2.25rem;
             border: 1px solid var(--border); border-left: 5px solid var(--primary);
         }}
-        .info-card h3 {{ margin-bottom: 1rem; color: var(--text-dark); font-size: 1.25rem; }}
-        .info-card p {{ color: #475569; margin-bottom: 0.75rem; font-size: 0.95rem; }}
-        footer {{
-            background: var(--dark); color: #94a3b8; padding: 4rem 2rem; margin-top: 6rem;
-            text-align: center; font-size: 0.95rem; border-top: 1px solid #1e293b;
+        .contact-box h3 {{ font-size: 1.25rem; color: var(--dark); margin-bottom: 1.25rem; font-weight: 700; }}
+        .contact-row {{
+            display: flex; align-items: flex-start; gap: 0.75rem;
+            margin-bottom: 1rem; color: var(--text); font-size: 0.95rem;
         }}
-        @media(max-width: 768px) {{
-            .hero h1 {{ font-size: 2.3rem; }}
-            .about-box {{ grid-template-columns: 1fr; padding: 2rem; gap: 2rem; }}
-            .nav-links {{ display: none; }}
+        .contact-row:last-child {{ margin-bottom: 0; }}
+
+        .faq-wrap {{ max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }}
+        .faq-item {{
+            background: #ffffff; border: 1px solid var(--border);
+            border-radius: 1rem; padding: 1.25rem 1.5rem;
+            transition: all 0.2s ease;
+        }}
+        .faq-item summary {{
+            font-weight: 700; font-size: 1.05rem; color: var(--dark);
+            cursor: pointer; list-style: none; display: flex;
+            justify-content: space-between; align-items: center;
+        }}
+        .faq-item summary::-webkit-details-marker {{ display: none; }}
+        .faq-item summary::after {{
+            content: "+"; font-size: 1.4rem; color: var(--primary); font-weight: 400;
+            transition: transform 0.2s;
+        }}
+        .faq-item[open] summary::after {{ transform: rotate(45deg); }}
+        .faq-body {{ margin-top: 1rem; color: var(--text-muted); font-size: 0.98rem; line-height: 1.6; border-top: 1px solid var(--border); padding-top: 0.85rem; }}
+
+        footer {{
+            background: var(--dark); color: #94a3b8;
+            padding: 4.5rem 2rem 2.5rem; margin-top: 5rem;
+            border-top: 1px solid rgba(255,255,255,0.06);
+        }}
+        .footer-inner {{
+            max-width: 1200px; margin: 0 auto;
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 2rem; padding-bottom: 2.5rem;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }}
+        .footer-logo {{ font-size: 1.3rem; font-weight: 800; color: #fff; text-decoration: none; }}
+        .footer-logo span {{ color: var(--primary); }}
+        .footer-links {{ display: flex; gap: 2rem; list-style: none; }}
+        .footer-links a {{ color: #94a3b8; text-decoration: none; font-size: 0.9rem; transition: color 0.2s; }}
+        .footer-links a:hover {{ color: #fff; }}
+        .footer-bottom {{
+            max-width: 1200px; margin: 2rem auto 0;
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 0.85rem; color: #64748b; flex-wrap: wrap; gap: 1rem;
+        }}
+
+        @media(max-width: 900px) {{
+            .about-wrap {{ grid-template-columns: 1fr; gap: 2rem; padding: 2rem; }}
+            .stats-bar {{ grid-template-columns: repeat(2, 1fr); gap: 1.5rem; padding: 1.5rem; }}
+            .hero h1 {{ font-size: 2.5rem; }}
+            nav ul {{ display: none; }}
+        }}
+        @media(max-width: 600px) {{
+            .hero h1 {{ font-size: 2.1rem; }}
+            .hero {{ padding: 7.5rem 1.25rem 3.5rem; }}
+            .stats-bar {{ grid-template-columns: 1fr; }}
         }}
     </style>
 </head>
 <body>
     <header>
-        <div class="nav-container">
-            <a href="#" class="logo">{html.escape(brand)} <span>.</span></a>
-            <ul class="nav-links">
-                <li><a href="#services">{nav_services}</a></li>
-                <li><a href="#about">{nav_about}</a></li>
-                <li><a href="#contacts">{nav_contact}</a></li>
-            </ul>
+        <div class="header-inner">
+            <a href="#" class="logo">
+                <span class="logo-dot"></span>
+                {html.escape(brand)}
+            </a>
+            <nav>
+                <ul>
+                    <li><a href="#services">{lbl_services}</a></li>
+                    <li><a href="#about">{lbl_about}</a></li>
+                    <li><a href="#faq">{lbl_faq}</a></li>
+                    <li><a href="#contacts" class="btn-sm">{lbl_contact_btn}</a></li>
+                </ul>
+            </nav>
         </div>
     </header>
 
     <main>
         <section class="hero">
-            <div class="badge">{html.escape(city)} &bull; {html.escape(niche)}</div>
-            <h1>{html.escape(brand)}</h1>
-            <p>{html.escape(vibe)}</p>
-            <a href="#contacts" class="btn">{btn_contact}</a>
+            <div class="hero-badge">{t["badge"]}</div>
+            <h1>{html.escape(t["hero_title"])}</h1>
+            <p class="hero-sub">{html.escape(vibe)}</p>
+            <div class="hero-actions">
+                <a href="#services" class="btn-primary">{lbl_hero_btn1}</a>
+                <a href="#contacts" class="btn-secondary">{lbl_hero_btn2}</a>
+            </div>
         </section>
 
+        <div class="stats-bar">
+            {stats_html}
+        </div>
+
         <section class="section" id="services">
-            <div class="section-title">
-                <h2>{sec_services_title}</h2>
-                <p>{sec_services_sub}</p>
+            <div class="section-header">
+                <div class="section-tag">{lbl_sec_services_tag}</div>
+                <h2>{lbl_sec_services_h2}</h2>
+                <p>{lbl_sec_services_p}</p>
             </div>
-            <div class="grid">
-                <div class="card">
-                    <h3>{html.escape(card1_t)}</h3>
-                    <p>{html.escape(card1_d)}</p>
-                </div>
-                <div class="card">
-                    <h3>{html.escape(card2_t)}</h3>
-                    <p>{html.escape(card2_d)}</p>
-                </div>
-                <div class="card">
-                    <h3>{html.escape(card3_t)}</h3>
-                    <p>{html.escape(card3_d)}</p>
-                </div>
+            <div class="grid-cards">
+                {services_html}
             </div>
         </section>
 
         <section class="section" id="about">
-            <div class="about-box">
-                <div>
-                    <h2 style="font-size: 2rem; color: var(--text-dark); margin-bottom: 1.25rem; font-weight: 800;">{html.escape(about_title)}</h2>
-                    <p style="margin-bottom: 1.25rem; color: #475569; font-size: 1.05rem;">
-                        {html.escape(about_text1)}
-                    </p>
-                    <p style="color: #475569; font-size: 1.05rem;">
-                        {html.escape(about_text2)}
-                    </p>
+            <div class="about-wrap">
+                <div class="about-content">
+                    <div class="section-tag">{lbl_sec_about_tag}</div>
+                    <h2>{html.escape(lbl_sec_about_h2)}</h2>
+                    <p>{html.escape(t["about_p1"])}</p>
+                    <p>{html.escape(t["about_p2"])}</p>
                 </div>
-                <div class="info-card">
-                    <h3>{contact_title}</h3>
-                    <p>{html.escape(contact_addr)}</p>
-                    <p>{html.escape(contact_hours)}</p>
-                    <p>{html.escape(contact_phone)}</p>
+                <div class="contact-box" id="contacts">
+                    <h3>{lbl_box_contact_h3}</h3>
+                    <div class="contact-row">
+                        <span>📍</span>
+                        <div><strong>{lbl_row_loc}</strong> {html.escape(lbl_row_loc_val)}</div>
+                    </div>
+                    <div class="contact-row">
+                        <span>🕒</span>
+                        <div><strong>{lbl_row_hours}</strong> {html.escape(lbl_row_hours_val)}</div>
+                    </div>
+                    <div class="contact-row">
+                        <span>✉️</span>
+                        <div><strong>{lbl_row_email}</strong> info@{html.escape(domain)}</div>
+                    </div>
+                    <div class="contact-row">
+                        <span>🌐</span>
+                        <div><strong>{lbl_row_web}</strong> https://{html.escape(domain)}</div>
+                    </div>
                 </div>
+            </div>
+        </section>
+
+        <section class="section" id="faq">
+            <div class="section-header">
+                <div class="section-tag">{lbl_sec_faq_tag}</div>
+                <h2>{lbl_sec_faq_h2}</h2>
+                <p>{lbl_sec_faq_p}</p>
+            </div>
+            <div class="faq-wrap">
+                {faq_html}
             </div>
         </section>
     </main>
 
-    <footer id="contacts">
-        <p>{html.escape(footer_copy)}</p>
-        <p style="margin-top: 0.5rem; opacity: 0.7;">{html.escape(footer_sub)}</p>
+    <footer>
+        <div class="footer-inner">
+            <a href="#" class="footer-logo">
+                {html.escape(brand)}<span>.</span>
+            </a>
+            <ul class="footer-links">
+                <li><a href="#services">{lbl_services}</a></li>
+                <li><a href="#about">{lbl_about}</a></li>
+                <li><a href="#faq">{lbl_faq}</a></li>
+                <li><a href="#contacts">{lbl_contact_btn}</a></li>
+            </ul>
+        </div>
+        <div class="footer-bottom">
+            <div>{html.escape(lbl_footer_rights)}</div>
+            <div>{html.escape(lbl_footer_desc)}</div>
+        </div>
     </footer>
 </body>
-</html>'''
+</html>"""
 
-destination = Path(sys.argv[5])
-temporary = destination.with_suffix('.html.tmp')
-temporary.write_text(html_content, encoding='utf-8')
-temporary.replace(destination)
-print(f"[+] Сайт записан: {len(html_content.encode('utf-8'))} байт")
+temporary = dest_path.with_suffix('.html.tmp')
+temporary.write_text(html_code, encoding='utf-8')
+temporary.replace(dest_path)
+print(f"[+] Премиальный адаптивный сайт успешно создан: {len(html_code.encode('utf-8'))} байт (тема: {t['name']})")
 PY_SITE
 fi
-unset POLLINATIONS_API_KEY
 chmod 644 "$WEBROOT/index.html"
 printf '%s\n' "$WHITELIST" > "$STATE/whitelist.txt"
 STAGE=firewall
