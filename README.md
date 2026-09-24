@@ -40,9 +40,7 @@
 
 ## Установка одной командой
 
-Сначала замените `install.sh` в своём репозитории `dexxdd/custom-AI-VPS-tuner-` на файл из этого комплекта. Пока исправление не опубликовано, команда ниже скачивает содержимое существующего репозитория, а не приложенный здесь файл.
-
-После публикации пользователь подключается к VPS по SSH и вставляет **одну команду** (под root или пользователем с sudo):
+Пользователь подключается к VPS по SSH и вставляет **одну команду** (под root или пользователем с sudo):
 
 ```bash
 bash -c 'set -e; S=; [ "$(id -u)" -eq 0 ] || S=sudo; if ! command -v curl >/dev/null; then $S apt-get -o DPkg::Lock::Timeout=300 update; $S apt-get -o DPkg::Lock::Timeout=300 install -y curl ca-certificates; fi; f=$(mktemp); trap '\''rm -f -- "$f"'\'' EXIT; curl -fL --proto "=https" --connect-timeout 15 --max-time 120 --retry 2 https://raw.githubusercontent.com/dexxdd/custom-AI-VPS-tuner-/main/install.sh -o "$f"; $S bash "$f" </dev/tty'
@@ -61,7 +59,7 @@ bash -c 'set -e; S=; [ "$(id -u)" -eq 0 ] || S=sudo; if ! command -v curl >/dev/
 
 ## Запуск локального файла
 
-Загрузите **этот исправленный** `install.sh` на VPS, затем выполните:
+Загрузите `install.sh` на VPS, затем выполните:
 
 ```bash
 sudo bash install.sh vpn.example.com
@@ -69,7 +67,6 @@ sudo bash install.sh vpn.example.com
 
 Вместо `vpn.example.com` укажите свой домен или опустите аргумент, чтобы мастер запросил его. Для IPv6 разрешены обычные адреса и CIDR. `all` явно открывает новый VPN и, при чистой установке, новую панель всем IP; пустой ввод без определённого SSH-адреса не принимается.
 
-Ссылка на исходный GitHub-репозиторий пользователя по-прежнему скачивает старый скрипт, пока вы сами не замените файл в репозитории. Эта исправленная версия туда не опубликована.
 
 ## Как устроено подключение
 
