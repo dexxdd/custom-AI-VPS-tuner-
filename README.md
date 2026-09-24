@@ -205,6 +205,7 @@ sudo systemctl status certbot.timer
 
 ## Удаление
 
+```bash
 sudo bash -c '
 echo "[-] 1. Остановка и удаление служб..."
 systemctl stop x-ui "*vless-installer*" nginx certbot.timer 2>/dev/null || true
@@ -246,6 +247,7 @@ else
     echo "Сервер чист как с завода, можно ставить с нуля!"
 fi
 '
+```
 
 ## Источники совместимости
 
