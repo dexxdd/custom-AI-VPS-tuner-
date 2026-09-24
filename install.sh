@@ -680,7 +680,39 @@ install_3x_ui() {
 
 install_3x_ui
 
-PANEL_PORT=$(shuf -i 20000-65000 -n 1 2>/dev/null || python3 -c "import random; print(random.randint(20000, 65000))")
+# Подбор гарантированно свободного случайного порта для панели 3X-UI
+find_free_panel_port() {
+  local candidate
+  while true; do
+    candidate=$(shuf -i 20000-65000 -n 1 2>/dev/null || python3 -c "import random; print(random.randint(20000, 65000))")
+    
+    # Исключаем системные порты (80, 443, 22 и активный порт SSH)
+    local active_ssh
+    active_ssh=$(ss -tlnp 2>/dev/null | grep -E 'sshd|dropbear' | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1)
+    active_ssh="${active_ssh:-22}"
+    if [ "$candidate" = "80" ] || [ "$candidate" = "443" ] || [ "$candidate" = "$active_ssh" ] || [ "$candidate" = "22" ]; then
+      continue
+    fi
+    
+    # Проверка утилитой ss (не слушает ли уже кто-то этот порт)
+    if ss -tlnp 2>/dev/null | grep -q ":${candidate}\b"; then
+      continue
+    fi
+    
+    # Проверка fuser
+    if fuser "${candidate}/tcp" >/dev/null 2>&1; then
+      continue
+    fi
+    
+    # Строгая проверка через Python: реальная попытка bind сокета
+    if python3 -c "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('', $candidate)); s.close()" >/dev/null 2>&1; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+}
+
+PANEL_PORT=$(find_free_panel_port)
 PANEL_USER="admin"
 PANEL_PASS=$(openssl rand -hex 6)
 PANEL_PATH=$(openssl rand -hex 8)
