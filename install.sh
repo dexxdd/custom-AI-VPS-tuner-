@@ -1,370 +1,117 @@
-#!/bin/bash
-set -e
-
-# ==========================================================================
-# Скрипт автоматического развертывания VLESS-XHTTP + 3X-UI + AI Сайт-Маскировка
-# Отказоустойчивая версия (с защитой от зависаний, сбоев и ошибок пользователя)
-# ==========================================================================
-
-# Обработчик непредвиденных ошибок
-handle_error() {
-  local exit_code=$?
-  local line_no=$1
-  local cmd=$2
-  echo ""
-  echo "=========================================================================="
-  echo "[-] Произошла ошибка (код: $exit_code) на строке $line_no: $cmd"
-  echo "[-] Установка была приостановлена."
-  echo "[-] Вы можете исправить причину и перезапустить установку в любой момент:"
-  echo "    sudo bash install.sh"
-  echo "=========================================================================="
-  exit $exit_code
+#!/usr/bin/env bash
+# Fresh VPS installer. See README.md for requirements and recovery.
+set -Eeuo pipefail
+umask 077
+export LC_ALL=C.UTF-8
+STAGE=preflight
+WORK=''
+TEST_PID=''
+cleanup() {
+  if [[ -n "$TEST_PID" ]]; then kill "$TEST_PID" 2>/dev/null || true; fi
+  if [[ -n "$WORK" && "$WORK" == /tmp/vless-installer.* ]]; then rm -rf -- "$WORK"; fi
 }
-trap 'handle_error $LINENO "$BASH_COMMAND"' ERR
-
-# Проверка прав root
-if [ "$EUID" -ne 0 ]; then
-  echo "[-] Ошибка: запустите скрипт с правами суперпользователя (sudo bash)!"
-  exit 1
-fi
-
-clear
-echo "=========================================================================="
-echo "    АВТОМАТИЧЕСКАЯ УСТАНОВКА 3X-UI + VLESS XHTTP + AI САЙТ-МАСКИРОВКА     "
-echo "=========================================================================="
-echo ""
-
-# Функция ожидания снятия блокировки APT (частая проблема на свежих VPS)
-wait_for_apt_lock() {
-  local max_wait=60
-  local count=0
-  while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
-    if [ $count -eq 0 ]; then
-      echo "[*] Обнаружена блокировка менеджера пакетов (apt lock). Ожидание освобождения фоновым процессом..."
-    fi
-    sleep 2
-    count=$((count + 2))
-    if [ $count -ge $max_wait ]; then
-      echo "[!] Превышено время ожидания фонового обновления. Принудительное снятие блокировки..."
-      killall -9 apt-get apt unattended-upgrade 2>/dev/null || true
-      rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock* 2>/dev/null || true
-      dpkg --configure -a 2>/dev/null || true
-      break
-    fi
-  done
-}
-
-# Отключение конфликтующих служб (например, Apache, если он был предустановлен хостингом)
-systemctl stop apache2 2>/dev/null || true
-systemctl disable apache2 2>/dev/null || true
-
-# Определение внешнего IP сервера для подсказок DNS
-echo "[*] Определение внешнего IP-адреса сервера..."
-SERVER_IP=$(curl -s4 --connect-timeout 5 icanhazip.com || curl -s4 --connect-timeout 5 ifconfig.me || curl -s4 --connect-timeout 5 api.ipify.org || true)
-
-CLI_DOMAIN="$1"
-
-# Функция запроса и проверки домена с защитой от ошибок и зацикливаний
-prompt_and_validate_domain() {
-  while true; do
-    echo ""
-    echo "--------------------------------------------------------------------------"
-    echo "                     ПРИВЯЗКА ДОМЕНА К СЕРВЕРУ (DNS)                      "
-    echo "--------------------------------------------------------------------------"
-    if [ -n "$SERVER_IP" ]; then
-      echo " 🌐 Внешний IP вашего VPS: $SERVER_IP"
-    else
-      echo " 🌐 Внешний IP сервера: [будет определен позже]"
-    fi
-    echo ""
-    echo " 📌 ТРЕБОВАНИЯ ДЛЯ УСПЕШНОГО ВЫПУСКА SSL-СЕРТИФИКАТА:"
-    echo " 1. Домен (или поддомен) должен быть заранее направлен на IP этого сервера:"
-    echo "    • Тип записи:  A"
-    echo "    • Имя / Host:  @ (для основного домена) или имя поддомена (например: vpn)"
-    echo "    • Значение:    ${SERVER_IP:-<IP_ВАШЕГО_СЕРВЕРА>}"
-    echo "    • TTL:         Авто или 300 (5 минут)"
-    echo ""
-    echo " 2. Если DNS управляется через Cloudflare:"
-    echo "    • Проксирование (оранжевое облако) ОБЯЗАТЕЛЬНО должно быть ВЫКЛЮЧЕНО!"
-    echo "    • Режим записи: DNS only (серый значок облака)."
-    echo "    (Иначе Let's Encrypt не сможет подтвердить владение доменом и выдаст ошибку)."
-    echo ""
-    echo " 3. Если запись добавлена только что:"
-    echo "    • Распространение DNS в мире может занимать от 2 до 15 минут."
-    echo "--------------------------------------------------------------------------"
-    echo ""
-
-    if [ -n "$CLI_DOMAIN" ]; then
-      DOMAIN="$CLI_DOMAIN"
-      CLI_DOMAIN=""
-      echo "Используется домен из аргументов запуска: $DOMAIN"
-    else
-      printf "Введите ваш домен (например, your-domain.com): "
-      read -r DOMAIN < /dev/tty
-    fi
-
-    # Очистка домена: удаляем пробелы, http://, https://, слэши и переводим в нижний регистр
-    DOMAIN=$(echo "$DOMAIN" | sed -e 's|^[^/]*//||' -e 's|/.*$||' | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-
-    if [ -z "$DOMAIN" ]; then
-      echo "[-] Домен не указан! Пожалуйста, укажите имя домена."
-      continue
-    fi
-
-    echo ""
-    echo "[*] Проверка привязки домена $DOMAIN в системе DNS..."
-    RESOLVED_IP=$(getent ahosts "$DOMAIN" 2>/dev/null | awk '{print $1}' | head -n 1)
-    if [ -z "$RESOLVED_IP" ]; then
-      RESOLVED_IP=$(python3 -c "import socket; print(socket.gethostbyname('$DOMAIN'))" 2>/dev/null || true)
-    fi
-
-    if [ -n "$RESOLVED_IP" ]; then
-      if [ -n "$SERVER_IP" ] && [ "$RESOLVED_IP" = "$SERVER_IP" ]; then
-        echo " [+] Отлично! Домен $DOMAIN корректно направлен на этот сервер ($SERVER_IP)."
-        break
-      else
-        echo " [!] ВНИМАНИЕ: Домен $DOMAIN сейчас указывает на IP: $RESOLVED_IP"
-        echo "     (А IP этого сервера: ${SERVER_IP:-неизвестен})"
-        echo "     Возможные причины:"
-        echo "     1) В Cloudflare включен Proxy (оранжевое облако) — переключите в 'DNS only'."
-        echo "     2) Запись A изменена недавно и DNS-кэш еще обновляется."
-        echo "     3) Опечатка в IP-адресе в панели управления DNS вашего хостинга."
-        echo ""
-        echo "Выберите действие:"
-        echo " 1) Ввести другой домен (или исправить опечатку)"
-        echo " 2) Продолжить установку всё равно (я уверен, что DNS обновится)"
-        echo " 3) Выйти из скрипта для настройки DNS"
-        printf "Ваш выбор [1-3, Enter для 2]: "
-        read -r DNS_CHOICE < /dev/tty
-        DNS_CHOICE="${DNS_CHOICE:-2}"
-        if [ "$DNS_CHOICE" = "1" ]; then
-          continue
-        elif [ "$DNS_CHOICE" = "3" ]; then
-          echo "[-] Установка остановлена для настройки DNS."
-          exit 0
-        else
-          break
-        fi
-      fi
-    else
-      echo " [!] ВНИМАНИЕ: Домен $DOMAIN пока не отвечает в DNS (не резолвится в IP)."
-      echo "     Возможные причины:"
-      echo "     1) Запись A добавлена только что и DNS еще не обновился (подождите 5-10 мин)."
-      echo "     2) В названии домена допущена опечатка."
-      echo ""
-      echo "Выберите действие:"
-      echo " 1) Ввести домен заново"
-      echo " 2) Продолжить установку всё равно"
-      echo " 3) Выйти из скрипта"
-      printf "Ваш выбор [1-3, Enter для 2]: "
-      read -r DNS_CHOICE < /dev/tty
-      DNS_CHOICE="${DNS_CHOICE:-2}"
-      if [ "$DNS_CHOICE" = "1" ]; then
-        continue
-      elif [ "$DNS_CHOICE" = "3" ]; then
-        echo "[-] Установка остановлена."
-        exit 0
-      else
-        break
-      fi
-    fi
-  done
-}
-
-prompt_and_validate_domain
-
-# Определение IP админа из текущего SSH-подключения
-CURRENT_ADMIN_IP=$(echo "$SSH_CLIENT" | awk '{print $1}')
-if [ -z "$CURRENT_ADMIN_IP" ]; then
-  CURRENT_ADMIN_IP=$(who am i 2>/dev/null | awk '{print $5}' | tr -d '()')
-fi
-
-echo ""
-echo "--------------------------------------------------------------------------"
-echo "        НАСТРОЙКА БЕЛОГО СПИСКА ФАЕРВОЛА ДЛЯ АДМИН-ПАНЕЛИ 3X-UI           "
-echo "--------------------------------------------------------------------------"
-if [ -n "$CURRENT_ADMIN_IP" ]; then
-  echo " [+] Ваш текущий IP-адрес подключения (SSH): $CURRENT_ADMIN_IP"
-else
-  echo " [!] Не удалось автоматически определить ваш IP-адрес подключения."
-fi
-echo ""
-echo " Формат ввода:"
-if [ -n "$CURRENT_ADMIN_IP" ]; then
-  echo " • Разрешить вход только с вашего текущего IP ($CURRENT_ADMIN_IP):"
-  echo "   👉 Просто нажмите [Enter]"
-  echo ""
-fi
-echo " • Указать один или несколько своих IP/подсетей через запятую:"
-echo "   👉 Пример: 203.0.113.195, 198.51.100.0/24"
-echo ""
-echo " • Открыть вход в панель со всех IP мира (без белого списка):"
-echo "   👉 Напишите: all"
-echo "--------------------------------------------------------------------------"
-
-if [ -n "$CURRENT_ADMIN_IP" ]; then
-  printf " Введите IP/подсети [нажмите Enter для %s]: " "$CURRENT_ADMIN_IP"
-  read -r INPUT_IPS < /dev/tty
-  WHITELIST_IPS="${INPUT_IPS:-$CURRENT_ADMIN_IP}"
-else
-  printf " Введите IP/подсети через запятую (или 'all'): "
-  read -r WHITELIST_IPS < /dev/tty
-  WHITELIST_IPS="${WHITELIST_IPS:-all}"
-fi
-
-echo ""
-echo "[+] Выбранный домен: $DOMAIN"
-echo "[+] Белый список панели: $WHITELIST_IPS"
-echo "[+] IP сервера: $SERVER_IP"
-echo ""
-
-echo "[1/6] Обновление пакетов и установка зависимостей..."
-wait_for_apt_lock
+trap cleanup EXIT
+trap 'rc=$?; printf "\nОшибка на этапе %s, строка %s (код %s). Установка НЕ завершена.\n" "$STAGE" "$LINENO" "$rc" >&2; exit "$rc"' ERR
+die() { printf '%s\n' "$*" >&2; exit 1; }
+ask() { read -r -p "$2" "$1" </dev/tty || die 'Нужен интерактивный SSH-терминал.'; }
+[[ $EUID -eq 0 ]] || die 'Запустите: sudo bash install.sh [домен]'
+[[ -r /etc/os-release && -d /run/systemd/system ]] || die 'Нужна Linux-система с systemd.'
+. /etc/os-release
+case "$ID:$VERSION_ID" in
+  ubuntu:22.04|ubuntu:24.04|debian:12|debian:13) ;;
+  *) die 'Поддерживаются Ubuntu 22.04/24.04, Debian 12/13.' ;;
+esac
+case "$(uname -m)" in
+  x86_64) ARCH=amd64; SHA=6a85c110a04a727613c933c54ae602b8d37dab8876c6e20a6d46623010dd9d3c ;;
+  aarch64) ARCH=arm64; SHA=2dd601a32426fb19b0eafdffaead374a9cdb66be4dfb39407f9f50fa4e7234e7 ;;
+  *) die 'Поддерживаются только amd64 и arm64.' ;;
+esac
+readonly VERSION=v3.8.5
+readonly STATE=/etc/vless-installer
+readonly WEBROOT=/var/www/vless-site
+readonly ACME=/var/www/vless-acme
+readonly XUI=/usr/local/x-ui/x-ui
+readonly PANEL_PORT=2053
+readonly PUBLIC_PANEL_PORT=8443
+readonly XRAY_PORT=10000
+for target in "$STATE" /etc/x-ui /usr/local/x-ui "$WEBROOT" /etc/nginx/sites-available/vless-installer; do
+  [[ ! -e "$target" ]] || die "Обнаружено $target. Нужен чистый VPS: повторный запуск не перезаписывает существующую установку."
+done
+command -v ss >/dev/null || die 'Не найдена ss (пакет iproute2).'
+for port in 80 443 2096 "$PANEL_PORT" "$PUBLIC_PANEL_PORT" "$XRAY_PORT"; do
+  [[ -z "$(ss -H -ltn "sport = :$port")" ]] || die "Порт $port занят. Сначала выясните, какой службой."
+done
+exec 9>/run/vless-installer.lock
+flock -n 9 || die 'Другой экземпляр установщика уже работает.'
+DOMAIN=${1:-}
+[[ -n "$DOMAIN" ]] || ask DOMAIN 'Домен (без https:// и пути): '
+STAGE=dependencies
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y || { echo "[!] Предупреждение: некоторые репозитории недоступны, продолжаем..."; }
-wait_for_apt_lock
-apt-get install -y curl wget git nginx certbot jq sqlite3 ufw uuid-runtime qrencode python3 openssl
-
-# Функция выпуска SSL-сертификата с интерактивным выбором при ошибках
-issue_ssl_certificate() {
-  local attempt=1
-
-  while true; do
-    echo ""
-    echo "[2/6] Получение SSL-сертификата Let's Encrypt для $DOMAIN (попытка $attempt)..."
-    systemctl stop nginx apache2 2>/dev/null || true
-    fuser -k 80/tcp 2>/dev/null || true
-    sleep 1
-
-    CERT_FILE="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
-    KEY_FILE="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
-
-    if certbot certonly --standalone -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --preferred-challenges http; then
-      if [ -f "$CERT_FILE" ] && [ -f "$KEY_FILE" ]; then
-        echo "[+] SSL-сертификат Let's Encrypt успешно получен!"
-        return 0
-      fi
-    fi
-
-    echo ""
-    echo "[-] Не удалось выпустить SSL-сертификат Let's Encrypt для $DOMAIN."
-    echo "    Возможные причины:"
-    echo "    1) В Cloudflare включен Proxy (оранжевое облако) — переключите в 'DNS only'."
-    echo "    2) Запись A в DNS еще не обновилась глобально."
-    echo "    3) Превышен лимит запросов Let's Encrypt."
-    echo ""
-    echo "Выберите действие:"
-    echo " 1) Повторить попытку получения сертификата сейчас"
-    echo " 2) Ввести другой домен"
-    echo " 3) Создать надежный самоподписанный SSL (установка завершится без задержек)"
-    echo " 4) Прервать установку"
-    printf "Ваш выбор [1-4, Enter для 1]: "
-    read -r SSL_CHOICE < /dev/tty
-    SSL_CHOICE="${SSL_CHOICE:-1}"
-
-    case "$SSL_CHOICE" in
-      1)
-        attempt=$((attempt + 1))
-        echo "[*] Повторная попытка через 3 секунды..."
-        sleep 3
-        ;;
-      2)
-        prompt_and_validate_domain
-        attempt=1
-        ;;
-      3)
-        echo "[*] Генерация надежного самоподписанного SSL-сертификата..."
-        mkdir -p "/etc/letsencrypt/live/$DOMAIN"
-        CERT_FILE="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
-        KEY_FILE="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
-        openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
-          -keyout "$KEY_FILE" \
-          -out "$CERT_FILE" \
-          -subj "/CN=$DOMAIN" 2>/dev/null
-        echo "[+] Самоподписанный SSL-сертификат успешно создан!"
-        return 0
-        ;;
-      *)
-        echo "[-] Установка прервана пользователем."
-        exit 1
-        ;;
-    esac
-  done
-}
-
-issue_ssl_certificate
-
-echo ""
-echo "=========================================================================="
-echo "          [3/6] ГЕНЕРАТОР САЙТА-ПРИКРЫТИЯ (AI MASK GENERATOR)             "
-echo "=========================================================================="
-echo " Нейросеть создаст уникальный HTML5-сайт компании под ключ:"
-echo " • Автоматический подбор языка под выбранный город (Tokyo -> японский,"
-echo "   Berlin -> немецкий, Paris -> французский, Rome -> итальянский и т.д.)"
-echo " • Профессиональный адаптивный дизайн, 2026 год, контакты и форма"
-echo " • Без регистрации, без API-ключей, полностью бесплатно"
-echo "--------------------------------------------------------------------------"
-echo " [СОВЕТ] Если нажать [Enter] на любом поле, скрипт сам выберет случайный"
-echo "         крутой вариант компании мирового уровня!"
-echo "=========================================================================="
-echo ""
-
-# Авторандом: подбор случайного качественного пресета компании
-RANDOM_PRESET=$(python3 -c "
-import random
-presets = [
-    ('Tokyo', 'Kissa Neo-Tokyo', 'Specialty Coffee & Japanese Bakery', 'Artisanal roasting with minimalist aesthetics'),
-    ('Berlin', 'Bauhaus Studio Lab', 'Modern Architecture & Sustainable Design', 'Brutalist minimalism with eco-friendly innovation'),
-    ('Paris', 'Atelier Lumière', 'Haute Parfumerie & Botanical Scents', 'Refined Parisian luxury handcrafted with passion'),
-    ('Rome', 'Trattoria Antica Roma', 'Authentic Cucina & Natural Wine Bar', 'Warm family hospitality and traditional wood-fired recipes'),
-    ('Amsterdam', 'Velocitas Cycle Lab', 'Custom Urban Bicycles & Commuter Gear', 'Dutch craft engineering for sustainable city life'),
-    ('Zurich', 'Helvetia Wealth Advisors', 'Private Wealth & Financial Technologies', 'Swiss precision, discreet trust and high-end security'),
-    ('New York', 'Apex Creative Studio', 'Digital Media & Brand Strategy Agency', 'Fast-paced metropolitan energy with cutting-edge tech'),
-    ('Madrid', 'Estudio Sol Creativo', 'Diseño de Interiores y Arquitectura', 'Luz mediterránea, sostenibilidad y vanguardia'),
-    ('Seoul', 'Gangnam Sound & Vision', 'Audio Engineering & Creative Media', 'High-tech K-innovations and state-of-the-art studio'),
-    ('Vienna', 'Kaiser & Franz Kaffeehaus', 'Specialty Austrian Roastery & Bakery', 'Imperial Viennese coffee heritage with artisanal craft')
-]
-p = random.choice(presets)
-print('|'.join(p))
-")
-
-IFS='|' read -r DEF_CITY DEF_BRAND DEF_NICHE DEF_VIBE <<< "$RANDOM_PRESET"
-
-echo " [Форма параметров сайта]"
-printf " 1. Город / Локация (например, Tokyo, Berlin, Paris, Москва) [Enter для '%s']: " "$DEF_CITY"
-read -r INPUT_CITY < /dev/tty
-CITY=$(echo "${INPUT_CITY:-$DEF_CITY}" | xargs)
-CITY="${CITY:-$DEF_CITY}"
-
-printf " 2. Название компании / Бренда [Enter для '%s']: " "$DEF_BRAND"
-read -r INPUT_BRAND < /dev/tty
-BRAND=$(echo "${INPUT_BRAND:-$DEF_BRAND}" | xargs)
-BRAND="${BRAND:-$DEF_BRAND}"
-
-printf " 3. Сфера деятельности / Ниша [Enter для '%s']: " "$DEF_NICHE"
-read -r INPUT_NICHE < /dev/tty
-NICHE=$(echo "${INPUT_NICHE:-$DEF_NICHE}" | xargs)
-NICHE="${NICHE:-$DEF_NICHE}"
-
-printf " 4. Атмосфера / Фишка компании [Enter для '%s']: " "$DEF_VIBE"
-read -r INPUT_VIBE < /dev/tty
-VIBE=$(echo "${INPUT_VIBE:-$DEF_VIBE}" | xargs)
-VIBE="${VIBE:-$DEF_VIBE}"
-
-echo ""
-echo "[+] Выбранные параметры:"
-echo "    • Город:     $CITY"
-echo "    • Бренд:     $BRAND"
-echo "    • Ниша:      $NICHE"
-echo "    • Атмосфера: $VIBE"
-echo ""
-echo "[*] Генерация сайта нейросетью... Пожалуйста, подождите (10-25 сек)..."
-
-mkdir -p /var/www/html
-rm -rf /var/www/html/* /var/www/html/.* 2>/dev/null || true
-
-python3 - "$CITY" "$BRAND" "$NICHE" "$VIBE" << 'PYEOF'
+echo 'Установка зависимостей. При занятости APT ждём до 300 секунд; блокировки не удаляются.'
+apt-get -o DPkg::Lock::Timeout=300 update
+apt-get -o DPkg::Lock::Timeout=300 install -y ca-certificates curl nginx certbot python3 openssl qrencode tar
+DOMAIN=$(python3 - "$DOMAIN" <<'PY_DOMAIN'
+import re, sys
+domain = sys.argv[1].strip().rstrip('.').lower()
+try:
+    domain = domain.encode('idna').decode('ascii')
+except UnicodeError:
+    raise SystemExit('Некорректный домен')
+labels = domain.split('.')
+if len(domain) > 253 or len(labels) < 2 or not re.fullmatch(r'[a-z][a-z0-9-]*', labels[-1]):
+    raise SystemExit('Введите доменное имя без протокола, порта и пути')
+if any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', s) for s in labels):
+    raise SystemExit('Некорректное доменное имя')
+print(domain)
+PY_DOMAIN
+)
+echo "Домен: $DOMAIN. Все A/AAAA должны указывать на этот VPS; TCP 80/443/8443 должны быть доступны в панели хостинга."
+echo 'Для этой инструкции используйте DNS only. Неверную AAAA удалите или исправьте.'
+getent ahosts "$DOMAIN" || die 'Домен не разрешается. Исправьте DNS и запустите снова.'
+ADMIN_IP=${SSH_CONNECTION:-}
+ADMIN_IP=${ADMIN_IP%% *}
+ADMIN_IP=${ADMIN_IP:-${SSH_CLIENT:-}}
+ADMIN_IP=${ADMIN_IP%% *}
+ask WHITELIST "IP/CIDR для панели через запятую, all — всем [${ADMIN_IP:-обязательно указать}]: "
+WHITELIST=${WHITELIST:-$ADMIN_IP}
+ACL=$(python3 - "$WHITELIST" <<'PY_ACL'
+import ipaddress, sys
+s = sys.argv[1].strip()
+if s == 'all':
+    print('allow all;')
+else:
+    if not s:
+        raise SystemExit('Пустой список доступа запрещён')
+    try:
+        nets = [str(ipaddress.ip_network(x.strip(), strict=False)) for x in s.split(',')]
+    except ValueError:
+        raise SystemExit('Некорректный IP или CIDR')
+    print('\n'.join('allow ' + n + ';' for n in nets))
+    print('deny all;')
+PY_ACL
+)
+PRESETS=('Tokyo|Kissa Studio|Specialty coffee|Japanese minimalism' 'Berlin|Bauhaus Lab|Architecture|Sustainable design' 'Paris|Atelier Lumiere|Botanical fragrances|Handcrafted scents')
+IFS='|' read -r DEF_CITY DEF_BRAND DEF_NICHE DEF_VIBE <<< "${PRESETS[RANDOM % ${#PRESETS[@]}]}"
+ask CITY "Город [$DEF_CITY]: "; CITY=${CITY:-$DEF_CITY}
+ask BRAND "Название [$DEF_BRAND]: "; BRAND=${BRAND:-$DEF_BRAND}
+ask NICHE "Сфера деятельности [$DEF_NICHE]: "; NICHE=${NICHE:-$DEF_NICHE}
+ask VIBE "Ключевые слова / стиль [$DEF_VIBE]: "; VIBE=${VIBE:-$DEF_VIBE}
+echo 'Для ИИ используется Pollinations. Параметры сайта отправляются сервису; действуют его тарифы и лимиты.'
+read -r -s -p 'API-ключ Pollinations (Enter — локальный шаблон): ' POLLINATIONS_API_KEY </dev/tty
+echo
+export POLLINATIONS_API_KEY
+if [[ -n "$POLLINATIONS_API_KEY" ]]; then
+  ask AI_MODEL 'ID текстовой модели из каталога Pollinations [openai]: '
+  export AI_MODEL=${AI_MODEL:-openai}
+fi
+WORK=$(mktemp -d /tmp/vless-installer.XXXXXXXX)
+install -d -m 700 "$STATE"
+install -d -m 755 "$WEBROOT" "$ACME" "$ACME/.well-known" "$ACME/.well-known/acme-challenge"
+STAGE=site
+timeout 150 python3 - "$CITY" "$BRAND" "$NICHE" "$VIBE" "$WEBROOT/index.html" <<'PY_SITE'
 import sys, os, json, re, urllib.request, html
+from datetime import datetime
+from pathlib import Path
 
 city = sys.argv[1].strip() if len(sys.argv) > 1 else "Tokyo"
 brand = sys.argv[2].strip() if len(sys.argv) > 2 else "Kissa Studio"
@@ -380,37 +127,45 @@ prompt = (
     f"Industry / Niche: '{niche}'.\n"
     f"Atmosphere / Brand Vibe: '{vibe}'.\n\n"
     f"STRICT REQUIREMENTS:\n"
-    f"1. LANGUAGE: The entire website copy (page title, navigation menu, hero headline, about section, 3-4 feature/service cards, contact address, working form, 2026 copyright footer) MUST be written in the primary native/official language of the city '{city}' (for example: Japanese for Tokyo, German for Berlin, French for Paris, Italian for Rome, Spanish for Madrid, Russian for Russian cities, etc.).\n"
+    f"1. LANGUAGE: The entire website copy (page title, navigation menu, hero headline, about section, 3-4 feature/service cards, contact address, current-year copyright footer) MUST be written in the primary native/official language of the city '{city}' (for example: Japanese for Tokyo, German for Berlin, French for Paris, Italian for Rome, Spanish for Madrid, Russian for Russian cities, etc.).\n"
     f"2. DESIGN: High-end, polished, responsive UI with modern CSS embedded inside <style>. Use clean typography (Inter or modern sans-serif), soft shadows, gradient accents, responsive flexbox/grid layout, smooth scrolling, and mobile responsiveness.\n"
-    f"3. IMAGERY: Use high-quality Unsplash image URLs with relevant keywords (e.g. https://images.unsplash.com/...).\n"
-    f"4. REALISM: Include realistic local phone number format, realistic street address in '{city}', working contact form, social links.\n"
+    f"3. ASSETS: Use CSS illustrations and inline styles. No JavaScript, forms, iframes, external scripts or tracking.\n"
+    f"4. CONTENT: Include city '{city}', no contact forms, no invented phone numbers or street addresses, no social links.\n"
     f"5. OUTPUT FORMAT: Return ONLY the raw HTML code starting with <!DOCTYPE html> and ending with </html>. Do NOT include markdown blocks, backticks, or conversational text."
 )
 
 try:
-    url = "https://text.pollinations.ai/"
+    key = os.environ.get("POLLINATIONS_API_KEY", "").strip()
+    if not key:
+        raise ValueError("API-ключ не задан")
+    url = "https://gen.pollinations.ai/v1/chat/completions"
     payload = json.dumps({
         "messages": [
             {"role": "system", "content": "You are an expert front-end web developer. You return ONLY valid raw HTML5 code starting with <!DOCTYPE html> and ending with </html>. Never use markdown code blocks or explanations."},
             {"role": "user", "content": prompt}
         ],
-        "model": "openai"
+        "model": os.environ.get("AI_MODEL", "openai")
     }).encode("utf-8")
 
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        raw = resp.read().decode("utf-8")
-        cleaned = raw.strip()
+    req = urllib.request.Request(url, data=payload, headers={
+        "Content-Type": "application/json", "Authorization": "Bearer " + key})
+    with urllib.request.urlopen(req, timeout=45) as resp:
+        raw = resp.read(2_000_001)
+        if len(raw) > 2_000_000:
+            raise ValueError("Ответ ИИ слишком большой")
+        result = json.loads(raw)
+        cleaned = result["choices"][0]["message"]["content"].strip()
         cleaned = re.sub(r'^```(?:html)?\s*', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\s*```$', '', cleaned).strip()
-        if "<html" in cleaned.lower():
-            if "</html>" not in cleaned.lower():
-                cleaned += "\n</body>\n</html>"
-            html_content = cleaned
-            ai_success = True
-            print("[+] Сайт успешно сгенерирован нейросетью!")
+        if not re.match(r'(?is)<!doctype\s+html\s*>', cleaned) or not re.search(r'(?is)</html>\s*$', cleaned):
+            raise ValueError("Получен неполный HTML")
+        if re.search(r'(?is)<(?:script|iframe|object|embed|form)\b|\son[a-z]+\s*=|javascript:|http-equiv\s*=', cleaned):
+            raise ValueError("ИИ добавил запрещённое активное содержимое")
+        html_content = cleaned
+        ai_success = True
+        print("[+] Сайт сгенерирован нейросетью; отправка форм и JavaScript отключены.")
 except Exception as e:
-    print(f"[!] Внимание: шлюз ИИ временно недоступен ({e}). Активирован встроенный генератор...")
+    print(f"[!] Внимание: шлюз ИИ временно недоступен ({type(e).__name__}). Активирован встроенный генератор...")
 
 if not ai_success or not html_content:
     is_cyrillic = any('\u0400' <= char <= '\u04FF' for char in f"{city} {brand} {niche} {vibe}")
@@ -433,11 +188,11 @@ if not ai_success or not html_content:
         about_text1 = f"Мы развиваем направление «{niche}» в г. {city}, объединяя многолетний опыт, современный подход и ценности: {vibe}."
         about_text2 = "Наша миссия — превосходить ожидания и создавать продукт, которым мы гордимся каждый день."
         contact_title = "Локация и график"
-        contact_addr = f"📍 г. {city}, Центральный проспект, 12"
+        contact_addr = f"📍 г. {city}"
         contact_hours = "🕒 Пн-Вс: 09:00 — 21:00"
-        contact_phone = "📞 Телефон: +7 (800) 555-35-35"
-        footer_copy = f"&copy; 2026 {brand} ({city}). Все права защищены."
-        footer_sub = "Официальный сайт компании. Политика конфиденциальности."
+        contact_phone = "Контактная информация уточняется"
+        footer_copy = f"© {datetime.now().year} {brand} ({city}). Все права защищены."
+        footer_sub = "Информационная страница."
     else:
         lang = "en"
         nav_services = "Services"
@@ -456,11 +211,11 @@ if not ai_success or not html_content:
         about_text1 = f"Specializing in {niche} in {city}, we blend time-tested mastery with modern vision: {vibe}."
         about_text2 = "Our philosophy is built on excellence, sustainability, and creating memorable experiences for our guests and partners."
         contact_title = "Location & Hours"
-        contact_addr = f"📍 Central Avenue, {city}"
+        contact_addr = f"📍 {city}"
         contact_hours = "🕒 Mon-Sun: 09:00 — 21:00"
-        contact_phone = f"📞 Inquiries: +1 (800) 555-0199"
-        footer_copy = f"&copy; 2026 {brand} ({city}). All rights reserved."
-        footer_sub = "Official corporate website. Privacy Policy & Terms."
+        contact_phone = f"Contact details coming soon"
+        footer_copy = f"© {datetime.now().year} {brand} ({city}). All rights reserved."
+        footer_sub = "Information page."
 
     html_content = f'''<!DOCTYPE html>
 <html lang="{lang}">
@@ -521,7 +276,7 @@ if not ai_success or not html_content:
         .section-title {{ text-align: center; margin-bottom: 3.5rem; }}
         .section-title h2 {{ font-size: 2.3rem; color: var(--text-dark); margin-bottom: 0.75rem; font-weight: 800; letter-spacing: -0.5px; }}
         .section-title p {{ color: #64748b; font-size: 1.1rem; }}
-        .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 2rem; }}
+        .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 2rem; }}
         .card {{
             background: var(--card-bg); padding: 2.5rem; border-radius: 1.25rem;
             border: 1px solid var(--border); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
@@ -607,260 +362,288 @@ if not ai_success or not html_content:
                 </div>
                 <div class="info-card">
                     <h3>{contact_title}</h3>
-                    <p>{contact_addr}</p>
-                    <p>{contact_hours}</p>
-                    <p>{contact_phone}</p>
+                    <p>{html.escape(contact_addr)}</p>
+                    <p>{html.escape(contact_hours)}</p>
+                    <p>{html.escape(contact_phone)}</p>
                 </div>
             </div>
         </section>
     </main>
 
     <footer id="contacts">
-        <p>{footer_copy}</p>
-        <p style="margin-top: 0.5rem; opacity: 0.7;">{footer_sub}</p>
+        <p>{html.escape(footer_copy)}</p>
+        <p style="margin-top: 0.5rem; opacity: 0.7;">{html.escape(footer_sub)}</p>
     </footer>
 </body>
 </html>'''
 
-with open('/var/www/html/index.html', 'w', encoding='utf-8') as f:
-    f.write(html_content)
-
-print(f"[+] Сайт успешно размещен в /var/www/html/index.html ({len(html_content)} байт)")
-PYEOF
-
-# Гарантия создания файла index.html
-if [ ! -s /var/www/html/index.html ]; then
-  cat << EOF > /var/www/html/index.html
-<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>$BRAND</title></head>
-<body style="font-family:sans-serif;text-align:center;padding:50px;">
-<h1>$BRAND</h1><p>$NICHE ($CITY)</p><p>$VIBE</p>
-</body></html>
-EOF
-fi
-
-chown -R www-data:www-data /var/www/html 2>/dev/null || true
-chmod -R 755 /var/www/html 2>/dev/null || true
-
-echo "[4/6] Запуск веб-сервера Nginx на порту 80..."
-cat << 'EOF' > /etc/nginx/sites-available/default
+destination = Path(sys.argv[5])
+temporary = destination.with_suffix('.html.tmp')
+temporary.write_text(html_content, encoding='utf-8')
+temporary.replace(destination)
+print(f"[+] Сайт записан: {len(html_content.encode('utf-8'))} байт")
+PY_SITE
+unset POLLINATIONS_API_KEY
+chmod 644 "$WEBROOT/index.html"
+STAGE=certificate
+# ACME webroot remains available for automatic renewals without stopping Nginx.
+cat > /etc/nginx/sites-available/vless-installer <<EOF
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    server_name _;
-    root /var/www/html;
-    index index.html;
-
-    location / {
-        try_files $uri $uri/ =404;
-    }
+    listen 80;
+    server_name $DOMAIN;
+    root $ACME;
+    location ^~ /.well-known/acme-challenge/ { default_type text/plain; try_files \$uri =404; }
+    location / { return 301 https://$DOMAIN\$request_uri; }
 }
 EOF
-
-nginx -t 2>/dev/null || { echo "[!] Предупреждение: тест Nginx выдал замечание, продолжаем..."; }
-systemctl restart nginx 2>/dev/null || systemctl start nginx 2>/dev/null || true
-systemctl enable nginx 2>/dev/null || true
-
-echo "[5/6] Установка 3X-UI панели и настройка VLESS-XHTTP..."
-export XUI_NONINTERACTIVE=1
-
-install_3x_ui() {
-  local attempts=0
-  while [ $attempts -lt 3 ]; do
-    if bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh); then
-      return 0
-    fi
-    attempts=$((attempts + 1))
-    echo "[!] Повторная попытка загрузки 3X-UI ($attempts/3)..."
-    sleep 3
-  done
-  echo "[-] Ошибка: не удалось загрузить установщик 3X-UI."
-  return 1
-}
-
-install_3x_ui
-
-# Подбор гарантированно свободного случайного порта для панели 3X-UI
-find_free_panel_port() {
-  local candidate
-  while true; do
-    candidate=$(shuf -i 20000-65000 -n 1 2>/dev/null || python3 -c "import random; print(random.randint(20000, 65000))")
-    
-    # Исключаем системные порты (80, 443, 22 и активный порт SSH)
-    local active_ssh
-    active_ssh=$(ss -tlnp 2>/dev/null | grep -E 'sshd|dropbear' | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1)
-    active_ssh="${active_ssh:-22}"
-    if [ "$candidate" = "80" ] || [ "$candidate" = "443" ] || [ "$candidate" = "$active_ssh" ] || [ "$candidate" = "22" ]; then
-      continue
-    fi
-    
-    # Проверка утилитой ss (не слушает ли уже кто-то этот порт)
-    if ss -tlnp 2>/dev/null | grep -q ":${candidate}\b"; then
-      continue
-    fi
-    
-    # Проверка fuser
-    if fuser "${candidate}/tcp" >/dev/null 2>&1; then
-      continue
-    fi
-    
-    # Строгая проверка через Python: реальная попытка bind сокета
-    if python3 -c "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('', $candidate)); s.close()" >/dev/null 2>&1; then
-      echo "$candidate"
-      return 0
-    fi
-  done
-}
-
-PANEL_PORT=$(find_free_panel_port)
-PANEL_USER="admin"
-PANEL_PASS=$(openssl rand -hex 6)
-PANEL_PATH=$(openssl rand -hex 8)
-
-echo "[+] Настройка защищенного порта и учетных данных 3X-UI..."
-x-ui setting -port "$PANEL_PORT" -username "$PANEL_USER" -password "$PANEL_PASS" -webBasePath "/$PANEL_PATH/"
+if [[ -s /proc/net/if_inet6 ]]; then
+  sed -i '/listen 80;/a\    listen [::]:80;' /etc/nginx/sites-available/vless-installer
+fi
+ln -s /etc/nginx/sites-available/vless-installer /etc/nginx/sites-enabled/vless-installer
+nginx -t
+systemctl enable --now nginx
+systemctl reload nginx
+# Preserve SSH rules and current firewall policy. Never turn UFW on blindly.
+if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then
+  ufw allow 80/tcp
+  ufw allow 443/tcp
+  # Access is restricted independently by the Nginx ACL, including IPv6.
+  ufw allow "$PUBLIC_PANEL_PORT/tcp"
+fi
+certbot certonly --webroot -w "$ACME" -d "$DOMAIN" --cert-name "$DOMAIN" \
+  --non-interactive --agree-tos --register-unsafely-without-email
+CERT_FILE=/etc/letsencrypt/live/$DOMAIN/fullchain.pem
+KEY_FILE=/etc/letsencrypt/live/$DOMAIN/privkey.pem
+[[ -s "$CERT_FILE" && -s "$KEY_FILE" ]]
+STAGE=panel
+curl -fL --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 600 --retry 2 \
+  "https://github.com/MHSanaei/3x-ui/releases/download/$VERSION/x-ui-linux-$ARCH.tar.gz" -o "$WORK/x-ui.tar.gz"
+printf '%s  %s\n' "$SHA" "$WORK/x-ui.tar.gz" | sha256sum -c -
+tar -xzf "$WORK/x-ui.tar.gz" -C "$WORK"
+[[ -s "$WORK/x-ui/x-ui" && -s "$WORK/x-ui/bin/xray-linux-$ARCH" ]]
+mv "$WORK/x-ui" /usr/local/x-ui
+chmod 755 "$XUI" "/usr/local/x-ui/bin/xray-linux-$ARCH"
+install -d -m 700 /etc/x-ui
+install -d -m 755 /var/log/x-ui
+PANEL_USER=admin
+PANEL_PASS=$(openssl rand -hex 18)
+PANEL_PATH=$(openssl rand -hex 16)
+XHTTP_PATH=/$(openssl rand -hex 16)/
+CLIENT_UUID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+cat > "$STATE/access.txt" <<EOF
+Сайт: https://$DOMAIN/
+Панель: https://$DOMAIN:$PUBLIC_PANEL_PORT/$PANEL_PATH/
+Логин: $PANEL_USER
+Пароль: $PANEL_PASS
+Список доступа: $WHITELIST
+Статус: настройка ещё не завершена.
+EOF
+# Use the binary, not the x-ui.sh menu wrapper. Configure before first start.
+cd /usr/local/x-ui
+"$XUI" setting -port "$PANEL_PORT" -listenIP 127.0.0.1 -username "$PANEL_USER" \
+  -password "$PANEL_PASS" -webBasePath "/$PANEL_PATH/"
+"$XUI" setting -getApiToken -tokenName vless-installer > "$WORK/token.txt"
+TOKEN=$(awk '/^apiToken:/ {print $2}' "$WORK/token.txt")
+[[ -n "$TOKEN" ]] || die '3x-ui не вернула API-токен.'
+printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$WORK/curl-auth"
+unset TOKEN
+cat > /etc/systemd/system/x-ui.service <<'UNIT'
+[Unit]
+Description=3x-ui panel and Xray
+After=network.target
+[Service]
+Type=simple
+WorkingDirectory=/usr/local/x-ui
+ExecStart=/usr/local/x-ui/x-ui
+Restart=on-failure
+RestartSec=5
+UMask=0077
+LimitNOFILE=1048576
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now x-ui
+BASE=http://127.0.0.1:$PANEL_PORT/$PANEL_PATH/panel/api
+ready=0
+for ((n=0; n<30; n++)); do
+  if curl -fsS --noproxy '*' --config "$WORK/curl-auth" --max-time 3 "$BASE/inbounds/list" -o "$WORK/ready.json" 2>/dev/null; then
+    ready=1; break
+  fi
+  sleep 1
+done
+[[ $ready == 1 ]] || die 'Панель не запустилась. См. journalctl -u x-ui.'
+# Disable the default public subscription service before adding any clients.
+curl -fsS --noproxy '*' --config "$WORK/curl-auth" --max-time 15 -X POST "$BASE/setting/all" -o "$WORK/settings.json"
+python3 - "$WORK/settings.json" "$WORK/settings-update.json" <<'PY_SETTINGS'
+import json, sys
+from pathlib import Path
+r = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+if r.get('success') is not True or not isinstance(r.get('obj'), dict):
+    raise SystemExit('Не удалось прочитать настройки панели')
+s = r['obj']
+s.update(subEnable=False, subJsonEnable=False, subClashEnable=False, subListen='127.0.0.1')
+Path(sys.argv[2]).write_text(json.dumps(s), encoding='utf-8')
+PY_SETTINGS
+curl -fsS --noproxy '*' --config "$WORK/curl-auth" --max-time 15 -H 'Content-Type: application/json' \
+  --data-binary "@$WORK/settings-update.json" "$BASE/setting/update" -o "$WORK/settings-result.json"
+python3 - "$WORK/settings-result.json" <<'PY_SETTINGS_RESULT'
+import json, sys
+from pathlib import Path
+if json.loads(Path(sys.argv[1]).read_text(encoding='utf-8')).get('success') is not True:
+    raise SystemExit('Не удалось отключить публичные подписки')
+PY_SETTINGS_RESULT
+python3 - "$CLIENT_UUID" "$DOMAIN" "$XHTTP_PATH" "$XRAY_PORT" "$WORK/inbound.json" <<'PY_INBOUND'
+import json, sys
+from pathlib import Path
+uid, domain, path, port, out = sys.argv[1:]
+client = dict(id=uid, email='initial-client', enable=True, flow='', limitIp=0,
+              totalGB=0, expiryTime=0, tgId=0, subId='', reset=0)
+inbound = dict(remark='VLESS-XHTTP', enable=True, expiryTime=0, total=0,
+    listen='127.0.0.1', port=int(port), protocol='vless', tag='vless-xhttp',
+    settings=dict(clients=[client], decryption='none', fallbacks=[]),
+    streamSettings=dict(network='xhttp', security='none',
+                        externalProxy=[dict(dest=domain, port=443, forceTls='tls',
+                                            sni=domain, alpn=['http/1.1'], fingerprint='chrome')],
+                        xhttpSettings=dict(host=domain, path=path, mode='packet-up')),
+    sniffing=dict(enabled=True, destOverride=['http','tls'], routeOnly=True))
+Path(out).write_text(json.dumps(inbound), encoding='utf-8')
+PY_INBOUND
+curl -fsS --noproxy '*' --config "$WORK/curl-auth" --max-time 30 -H 'Content-Type: application/json' \
+  --data-binary "@$WORK/inbound.json" "$BASE/inbounds/add" -o "$WORK/added.json"
+python3 - "$WORK/added.json" <<'PY_RESPONSE'
+import json, sys
+from pathlib import Path
+r = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+if r.get('success') is not True:
+    raise SystemExit('API не создала inbound: ' + str(r.get('msg')))
+PY_RESPONSE
 systemctl restart x-ui
-sleep 2
-
-CLIENT_UUID=$(uuidgen 2>/dev/null || python3 -c "import uuid; print(uuid.uuid4())")
-
-python3 -c "
-import sqlite3, json, time, os
-
-domain = '$DOMAIN'
-cert_file = '$CERT_FILE'
-key_file = '$KEY_FILE'
-client_uuid = '$CLIENT_UUID'
-db_path = '/etc/x-ui/x-ui.db'
-
-# Ожидание создания базы данных службой x-ui
-for _ in range(15):
-    if os.path.exists(db_path):
-        break
-    time.sleep(1)
-
-conn = sqlite3.connect(db_path)
-c = conn.cursor()
-
-# Проверка готовности таблицы inbounds
-for _ in range(10):
-    c.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name='inbounds'\")
-    if c.fetchone():
-        break
-    time.sleep(1)
-
-c.execute('DELETE FROM inbounds')
-
-# Проверка наличия таблицы client_traffics
-c.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name='client_traffics'\")
-has_traffics = bool(c.fetchone())
-if has_traffics:
-    c.execute('DELETE FROM client_traffics')
-
-settings = json.dumps({
-    'clients': [{'id': client_uuid, 'email': f'user@{domain}', 'flow': ''}],
-    'decryption': 'none',
-    'fallbacks': [{'dest': 80}]
-})
-
-stream_settings = json.dumps({
-    'network': 'xhttp',
-    'security': 'tls',
-    'tlsSettings': {
-        'serverName': domain,
-        'fingerprint': 'edge',
-        'certificates': [{
-            'certificateFile': cert_file,
-            'keyFile': key_file
-        }],
-        'alpn': ['http/1.1'],
-        'settings': {
-            'fingerprint': 'edge'
-        }
-    },
-    'xhttpSettings': {
-        'mode': 'auto',
-        'host': domain,
-        'path': '/api/',
-        'xPaddingBytes': '100-1000'
+STAGE=https
+cat >> /etc/nginx/sites-available/vless-installer <<EOF
+server {
+    listen 443 ssl http2;
+    server_name $DOMAIN;
+    ssl_certificate $CERT_FILE;
+    ssl_certificate_key $KEY_FILE;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    root $WEBROOT;
+    index index.html;
+    location ^~ $XHTTP_PATH {
+        proxy_pass http://127.0.0.1:$XRAY_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host $DOMAIN;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        client_max_body_size 0;
+        access_log off;
     }
-})
-
-sniffing = json.dumps({
-    'enabled': True,
-    'destOverride': ['http', 'tls', 'quic', 'fakedns']
-})
-
-c.execute('''
-    INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, sniffing)
-    VALUES (1, 0, 0, 0, 'VLESS-XHTTP', 1, 0, '', 443, 'vless', ?, ?, ?)
-''', (settings, stream_settings, sniffing))
-
-inbound_id = c.lastrowid
-if has_traffics:
-    c.execute('''
-        INSERT INTO client_traffics (inbound_id, enable, email, up, down, expiry_time, total, reset)
-        VALUES (?, 1, ?, 0, 0, 0, 0, 0)
-    ''', (inbound_id, f'user@{domain}'))
-
-conn.commit()
-conn.close()
-"
-
-fuser -k 443/tcp 2>/dev/null || true
-killall -9 xray 2>/dev/null || true
-systemctl restart x-ui
-sleep 2
-
-echo "[6/6] Настройка фаервола UFW (защита панели и предотвращение блокировки SSH)..."
-# Определение реального активного порта SSH
-SSH_PORT=$(ss -tlnp 2>/dev/null | grep -E 'sshd|dropbear' | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1)
-SSH_PORT="${SSH_PORT:-22}"
-
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow "$SSH_PORT"/tcp comment 'Active SSH' 2>/dev/null || true
-if [ "$SSH_PORT" != "22" ]; then
-  ufw allow 22/tcp comment 'Default SSH' 2>/dev/null || true
+    location / {
+        add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src https: data:; script-src 'none'; connect-src 'none'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'" always;
+        add_header X-Content-Type-Options nosniff always;
+        try_files \$uri \$uri/ =404;
+    }
+}
+server {
+    listen $PUBLIC_PANEL_PORT ssl;
+    server_name $DOMAIN;
+    ssl_certificate $CERT_FILE;
+    ssl_certificate_key $KEY_FILE;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    $ACL
+    location /$PANEL_PATH/ {
+        proxy_pass http://127.0.0.1:$PANEL_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Forwarded-Host \$http_host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+    }
+    location / { return 404; }
+}
+EOF
+if [[ -s /proc/net/if_inet6 ]]; then
+  sed -i '/listen 443 ssl http2;/a\    listen [::]:443 ssl http2;' /etc/nginx/sites-available/vless-installer
+  sed -i "/listen $PUBLIC_PANEL_PORT ssl;/a\\    listen [::]:$PUBLIC_PANEL_PORT ssl;" /etc/nginx/sites-available/vless-installer
 fi
-ufw allow 80/tcp comment 'HTTP Web' 2>/dev/null || true
-ufw allow 443/tcp comment 'HTTPS VLESS TLS' 2>/dev/null || true
-
-CLEAN_IPS=$(echo "$WHITELIST_IPS" | tr -d '[:space:]')
-if [ "$CLEAN_IPS" = "all" ] || [ -z "$CLEAN_IPS" ]; then
-  echo "[+] Админ-панель открыта для всех IP"
-  ufw allow "$PANEL_PORT"/tcp comment '3X-UI Public' 2>/dev/null || true
-else
-  IFS=',' read -ra ADDR_ARRAY <<< "$WHITELIST_IPS"
-  for item in "${ADDR_ARRAY[@]}"; do
-    ip=$(echo "$item" | xargs)
-    if [ -n "$ip" ]; then
-      echo "[+] Добавление в белый список UFW: $ip -> порт $PANEL_PORT"
-      ufw allow from "$ip" to any port "$PANEL_PORT" proto tcp comment '3X-UI Whitelist' 2>/dev/null || true
-    fi
-  done
-fi
-
-ufw --force enable 2>/dev/null || true
-
-VLESS_LINK="vless://${CLIENT_UUID}@${DOMAIN}:443?alpn=http%2F1.1&encryption=none&extra=%7B%22mode%22%3A%22auto%22%2C%22xPaddingBytes%22%3A%22100-1000%22%7D&fp=edge&host=${DOMAIN}&mode=auto&path=%2Fapi%2F&security=tls&sni=${DOMAIN}&type=xhttp&x_padding_bytes=100-1000#VLESS-XHTTP"
-
-echo ""
-echo "=========================================================================="
-echo "                 УСТАНОВКА ПОЛНОСТЬЮ ЗАВЕРШЕНА!                          "
-echo "=========================================================================="
-echo ""
-echo "Сайт-заглушка:   http://${DOMAIN}"
-echo ""
-echo "--- ВХОД В ПАНЕЛЬ 3X-UI ---"
-echo "URL:             http://${SERVER_IP}:${PANEL_PORT}/${PANEL_PATH}/"
-echo "Логин:           ${PANEL_USER}"
-echo "Пароль:          ${PANEL_PASS}"
-echo "Белый список:    ${WHITELIST_IPS}"
-echo ""
-echo "--- ВАША VLESS-ССЫЛКА ДЛЯ ПОДКЛЮЧЕНИЯ ---"
-echo "${VLESS_LINK}"
-echo ""
-echo "--- QR-КОД ДЛЯ ИМПОРТА В ТЕЛЕФОН ---"
-qrencode -t ANSIUTF8 "${VLESS_LINK}" 2>/dev/null || true
-echo "=========================================================================="
+nginx -t
+systemctl reload nginx
+install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
+cat > /etc/letsencrypt/renewal-hooks/deploy/vless-nginx <<'HOOK'
+#!/bin/sh
+set -e
+/usr/sbin/nginx -t
+/bin/systemctl reload nginx
+HOOK
+chmod 755 /etc/letsencrypt/renewal-hooks/deploy/vless-nginx
+systemctl enable --now certbot.timer
+STAGE=verification
+systemctl is-active --quiet nginx x-ui
+curl -fsS --noproxy '*' --max-time 15 --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" -o /dev/null
+# Wait for Xray, not only for the panel process.
+ready=0
+for ((n=0; n<30; n++)); do
+  if [[ -n "$(ss -H -ltn "sport = :$XRAY_PORT")" ]]; then ready=1; break; fi
+  sleep 1
+done
+[[ $ready == 1 ]] || die 'Xray не открыл локальный порт. См. журнал панели.'
+python3 - "$CLIENT_UUID" "$DOMAIN" "$XHTTP_PATH" "$STATE" <<'PY_CLIENT'
+import json, sys
+from pathlib import Path
+from urllib.parse import urlencode
+uid, domain, path, directory = sys.argv[1:]
+query = urlencode(dict(encryption='none', security='tls', sni=domain, fp='chrome',
+                       alpn='http/1.1', type='xhttp', host=domain, path=path, mode='packet-up'))
+link = f'vless://{uid}@{domain}:443?{query}#VLESS-XHTTP'
+Path(directory, 'connection.txt').write_text(link+'\n', encoding='utf-8')
+client = dict(log=dict(loglevel='warning'), inbounds=[dict(listen='127.0.0.1', port=10808,
+    protocol='socks', settings=dict(auth='noauth', udp=True))], outbounds=[dict(
+    protocol='vless', settings=dict(vnext=[dict(address=domain, port=443,
+        users=[dict(id=uid, encryption='none')])]), streamSettings=dict(network='xhttp',
+    security='tls', tlsSettings=dict(serverName=domain, fingerprint='chrome', alpn=['http/1.1']),
+    xhttpSettings=dict(host=domain, path=path, mode='packet-up')))])
+Path(directory, 'client.json').write_text(json.dumps(client, indent=2), encoding='utf-8')
+PY_CLIENT
+chmod 600 "$STATE"/*
+# Exercise the whole local chain: SOCKS -> VLESS/XHTTP -> Nginx TLS -> Xray -> Internet.
+python3 - "$STATE/client.json" "$WORK/test-client.json" "$WORK/test-port" <<'PY_TEST_CLIENT'
+import json, socket, sys
+from pathlib import Path
+with socket.socket() as sock:
+    sock.bind(('127.0.0.1', 0))
+    port = sock.getsockname()[1]
+cfg = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+cfg['inbounds'][0]['port'] = port
+cfg['outbounds'][0]['settings']['vnext'][0]['address'] = '127.0.0.1'
+Path(sys.argv[2]).write_text(json.dumps(cfg), encoding='utf-8')
+Path(sys.argv[3]).write_text(str(port), encoding='utf-8')
+PY_TEST_CLIENT
+TEST_PORT=$(cat "$WORK/test-port")
+XRAY=/usr/local/x-ui/bin/xray-linux-$ARCH
+"$XRAY" run -test -config "$WORK/test-client.json"
+"$XRAY" run -config "$WORK/test-client.json" > "$STATE/selftest.log" 2>&1 &
+TEST_PID=$!
+ready=0
+for ((n=0; n<15; n++)); do
+  if [[ -n "$(ss -H -ltn "sport = :$TEST_PORT")" ]]; then ready=1; break; fi
+  sleep 1
+done
+[[ $ready == 1 ]] || die "Тестовый Xray не запустился: $STATE/selftest.log"
+curl -fsS --noproxy '' --proxy "socks5h://127.0.0.1:$TEST_PORT" \
+  --connect-timeout 15 --max-time 45 https://example.com/ -o /dev/null
+kill "$TEST_PID"
+wait "$TEST_PID" || true
+TEST_PID=''
+echo 'Локальные проверки пройдены: Nginx, доверенный TLS, панель и передача HTTPS через VLESS-XHTTP.'
+echo 'Теперь проверьте подключение с телефона/ПК: внешняя сеть и клиент здесь не проверены.'
+printf '\nСтатус: локальные проверки пройдены. Требуется внешний тест клиента.\n' >> "$STATE/access.txt"
+cat "$STATE/access.txt" "$STATE/connection.txt"
+qrencode -t ANSIUTF8 < "$STATE/connection.txt" || true
+echo "Данные сохранены в $STATE (доступ только root)."
