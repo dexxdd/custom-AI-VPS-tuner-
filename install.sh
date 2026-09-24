@@ -120,10 +120,38 @@ readonly WEBROOT=/var/www/$INSTANCE-site
 readonly ACME=/var/www/$INSTANCE-acme
 readonly NGINX_SITE=/etc/nginx/sites-available/$INSTANCE
 targets=("$STATE" "$WEBROOT" "$ACME" "$NGINX_SITE" "/etc/nginx/sites-enabled/$INSTANCE")
-if [[ "$INSTALL_MODE" == 1 ]]; then targets+=(/etc/x-ui /usr/local/x-ui); fi
-for target in "${targets[@]}"; do
-  [[ ! -e "$target" && ! -L "$target" ]] || die "Обнаружено $target. Выберите режим дополнения или чистый VPS."
-done
+if [[ "$INSTALL_MODE" == 1 ]]; then
+  has_existing=0
+  for target in "${targets[@]}" /etc/x-ui /usr/local/x-ui; do
+    if [[ -e "$target" || -L "$target" ]]; then has_existing=1; break; fi
+  done
+  if [[ "$has_existing" == 1 ]]; then
+    echo ""
+    echo -e "${CLR_YELLOW}┌─── [ ⚠️  ОБНАРУЖЕНА ПРЕДЫДУЩАЯ УСТАНОВКА ]───────────────────────────────────${CLR_RESET}"
+    echo -e "${CLR_YELLOW}│ На сервере найдены файлы или службы от прошлого запуска.${CLR_RESET}"
+    echo -e "${CLR_YELLOW}│ Вы выбрали режим [1] Чистый VPS.${CLR_RESET}"
+    echo -e "${CLR_YELLOW}│ Переустановить заново с автоматической очисткой старых служб и портов?${CLR_RESET}"
+    echo -e "${CLR_YELLOW}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+    ask REINSTALL_CONFIRM 'Очистить и переустановить заново? (1 — Да, 2 — Отмена) [1]: '
+    REINSTALL_CONFIRM=${REINSTALL_CONFIRM:-1}
+    if [[ "$REINSTALL_CONFIRM" == 1 ]]; then
+      echo -e "${CLR_BLUE}[*] Остановка служб и освобождение портов...${CLR_RESET}"
+      systemctl stop x-ui 2>/dev/null || true
+      systemctl stop "*$INSTANCE*" 2>/dev/null || true
+      systemctl stop nginx 2>/dev/null || true
+      for target in "${targets[@]}"; do
+        rm -rf "$target"
+      done
+      rm -rf /etc/x-ui /usr/local/x-ui /var/log/x-ui
+    else
+      die "Установка отменена пользователем."
+    fi
+  fi
+else
+  for target in "${targets[@]}"; do
+    [[ ! -e "$target" && ! -L "$target" ]] || die "Обнаружено $target. Для повторного запуска удалите старый $target."
+  done
+fi
 command -v ss >/dev/null || die 'Не найдена ss (пакет iproute2).'
 command -v flock >/dev/null || die 'Не найдена flock (пакет util-linux).'
 [[ "$PUBLIC_TLS_PORT" != "$XRAY_PORT" ]] || die 'Совпали внутренний и внешний порты; повторите запуск.'
@@ -136,6 +164,8 @@ ports=("$PUBLIC_TLS_PORT" "$XRAY_PORT")
 if [[ "$INSTALL_MODE" == 1 ]]; then
   systemctl stop apache2 2>/dev/null || true
   systemctl disable apache2 2>/dev/null || true
+  systemctl stop nginx 2>/dev/null || true
+  systemctl stop x-ui 2>/dev/null || true
   ports+=(80 2096 "$PANEL_PORT" "$PUBLIC_PANEL_PORT")
 fi
 for port in "${ports[@]}"; do
@@ -291,19 +321,72 @@ while true; do
   esac
 done
 if [[ "$SITE_MODE" == 3 ]]; then
+  # Auto-detect any already uploaded HTML files on the server
+  DEF_HTML="/root/index.html"
+  FOUND_HTML=""
+  for candidate in /root/index.html /root/my-site.html /root/site.html "$PWD/index.html"; do
+    if [[ -f "$candidate" && -s "$candidate" ]]; then
+      FOUND_HTML="$candidate"
+      DEF_HTML="$candidate"
+      break
+    fi
+  done
+
   echo ""
-  echo -e "${CLR_MAGENTA}┌─── [${CLR_WHITE}${CLR_BOLD} ИНСТРУКЦИЯ ПО ЗАГРУЗКЕ СВОЕГО HTML ${CLR_MAGENTA}]─────────────────────────────${CLR_RESET}"
-  echo -e "${CLR_MAGENTA}│ ${CLR_WHITE}Скрипт работает на сервере и не видит файлы на вашем ПК.${CLR_RESET}"
-  echo -e "${CLR_MAGENTA}│ ${CLR_YELLOW}1.${CLR_WHITE} Оставьте это окно терминала открытым.${CLR_RESET}"
-  echo -e "${CLR_MAGENTA}│ ${CLR_YELLOW}2.${CLR_WHITE} Откройте ${CLR_BOLD}второе окно терминала/PowerShell${CLR_RESET}${CLR_MAGENTA} на вашем ПК и выполните:${CLR_RESET}"
-  echo -e "${CLR_MAGENTA}│    ${CLR_CYAN}scp -P 22 \"C:\\Users\\...\\index.html\" root@${DOMAIN}:~/my-site.html${CLR_RESET}"
-  echo -e "${CLR_MAGENTA}│ ${CLR_YELLOW}3.${CLR_WHITE} Либо подключитесь через WinSCP / FileZilla (SFTP) и закиньте HTML-файл.${CLR_RESET}"
-  echo -e "${CLR_MAGENTA}│ ${CLR_YELLOW}4.${CLR_WHITE} Введите ниже полный путь к файлу на сервере (например: ${CLR_BOLD}/root/my-site.html${CLR_RESET}${CLR_MAGENTA}).${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 3: ЗАГРУЗКА ВАШЕГО HTML-САЙТА ${CLR_MAGENTA}]─────────────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│ ${CLR_WHITE}Вы можете использовать любой из двух способов:${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│ ${CLR_GREEN}${CLR_BOLD}СПОСОБ 1 (ЗАГРУЗКА ЧЕРЕЗ POWERSHELL С КОМПЬЮТЕРА):${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│   Выполните во втором окне PowerShell на вашем ПК:${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│   ${CLR_CYAN}scp -P 22 \"C:\\Users\\dex\\Downloads\\alania_site\\index.html\" root@${DOMAIN:-IP}:/root/index.html${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│   ${CLR_WHITE}Файл сохранится на сервере как: ${CLR_YELLOW}/root/index.html${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│ ${CLR_GREEN}${CLR_BOLD}СПОСОБ 2 (ПРЯМАЯ ССЫЛКА НА GITHUB RAW / ЛЮБОЙ HTTPS URL):${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│   ${CLR_WHITE}Просто вставьте ссылку на raw index.html, например:${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│   ${CLR_CYAN}https://raw.githubusercontent.com/.../main/index.html${CLR_RESET}"
   echo -e "${CLR_MAGENTA}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+
+  if [[ -n "$FOUND_HTML" ]]; then
+    echo ""
+    echo -e "${CLR_GREEN}✨ На сервере уже обнаружен файл: ${CLR_BOLD}$FOUND_HTML${CLR_RESET}"
+    echo -e "${CLR_WHITE}Чтобы использовать его — просто нажмите ${CLR_BOLD}[Enter]${CLR_RESET}."
+  fi
+
   while true; do
-    ask HTML_SOURCE 'Полный путь загруженного HTML на VPS: '
-    if [[ "$HTML_SOURCE" == /* && -f "$HTML_SOURCE" && -r "$HTML_SOURCE" && -s "$HTML_SOURCE" ]]; then break; fi
-    echo -e "${CLR_RED}Файл не найден, пуст или недоступен. Завершите загрузку и повторите ввод.${CLR_RESET}"
+    ask HTML_SOURCE "Путь к файлу на сервере или HTTPS-ссылка [$DEF_HTML]: "
+    HTML_SOURCE=${HTML_SOURCE:-$DEF_HTML}
+
+    # Handle direct URL download
+    if [[ "$HTML_SOURCE" =~ ^https?:// ]]; then
+      echo -e "${CLR_BLUE}[*] Скачивание сайта по ссылке...${CLR_RESET}"
+      if curl -fL --connect-timeout 10 --max-time 30 "$HTML_SOURCE" -o "$WORK/downloaded_site.html" 2>/dev/null; then
+        HTML_SOURCE="$WORK/downloaded_site.html"
+        echo -e "${CLR_GREEN}[+] Файл успешно скачан из интернета!${CLR_RESET}"
+      else
+        echo -e "${CLR_RED}❌ Не удалось скачать файл по ссылке. Проверьте адрес и повторите ввод.${CLR_RESET}"
+        continue
+      fi
+    fi
+
+    # Expand tilde ~ and relative paths
+    if [[ "$HTML_SOURCE" == \~/* ]]; then
+      HTML_SOURCE="${HOME:-/root}/${HTML_SOURCE#\~/}"
+    elif [[ "$HTML_SOURCE" == \~ ]]; then
+      HTML_SOURCE="${HOME:-/root}/index.html"
+    elif [[ "$HTML_SOURCE" != /* ]]; then
+      HTML_SOURCE="${PWD:-/root}/$HTML_SOURCE"
+    fi
+
+    if [[ -f "$HTML_SOURCE" && -r "$HTML_SOURCE" && -s "$HTML_SOURCE" ]]; then
+      echo -e "${CLR_GREEN}[+] Файл принят: $HTML_SOURCE ($(wc -c < "$HTML_SOURCE" | tr -d ' ') байт)${CLR_RESET}"
+      break
+    fi
+
+    echo ""
+    echo -e "${CLR_RED}┌─── [ ❌ ФАЙЛ НЕ НАЙДЕН НА СЕРВЕРЕ ]─────────────────────────────────────────${CLR_RESET}"
+    echo -e "${CLR_RED}│ Путь: $HTML_SOURCE${CLR_RESET}"
+    echo -e "${CLR_RED}│ Проверьте, завершилась ли команда scp в синем окне PowerShell на вашем ПК.${CLR_RESET}"
+    echo -e "${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
   done
 else
   echo ""
@@ -392,10 +475,13 @@ try:
     text = raw.decode('utf-8-sig')
 except UnicodeDecodeError:
     raise SystemExit('Сохраните HTML в UTF-8 и загрузите повторно')
-if '\x00' in text or not re.search(r'<html\b', text, re.I) or not re.search(r'</html\s*>', text, re.I):
-    raise SystemExit('Нужен полный HTML-документ с <html> и </html>')
+if '\x00' in text or not re.search(r'<html\b|<!doctype|<body\b', text, re.I):
+    raise SystemExit('Нужен валидный HTML-документ (содержащий html, body или doctype)')
+if not re.search(r'</html\s*>', text, re.I):
+    text += "\n</html>"
+    raw = text.encode('utf-8')
 destination.write_bytes(raw)
-print('Готовый сайт скопирован без изменения содержимого. Исходный файл сохранён.')
+print('[+] Готовый сайт успешно установлен в веб-директорию!')
 PY_UPLOAD
   then break; fi
   echo 'Исправьте или заново загрузите HTML и повторите ввод.'
