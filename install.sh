@@ -196,7 +196,7 @@ if [ -n "$CURRENT_ADMIN_IP" ]; then
   echo ""
 fi
 echo " • Указать один или несколько своих IP/подсетей через запятую:"
-echo "   👉 Пример: 85.174.0.0/16, 5.34.213.108, 185.46.49.0/24"
+echo "   👉 Пример: 203.0.113.195, 198.51.100.0/24"
 echo ""
 echo " • Открыть вход в панель со всех IP мира (без белого списка):"
 echo "   👉 Напишите: all"
@@ -322,7 +322,7 @@ presets = [
     ('New York', 'Apex Creative Studio', 'Digital Media & Brand Strategy Agency', 'Fast-paced metropolitan energy with cutting-edge tech'),
     ('Madrid', 'Estudio Sol Creativo', 'Diseño de Interiores y Arquitectura', 'Luz mediterránea, sostenibilidad y vanguardia'),
     ('Seoul', 'Gangnam Sound & Vision', 'Audio Engineering & Creative Media', 'High-tech K-innovations and state-of-the-art studio'),
-    ('Vladikavkaz', 'Иристон Крафт', 'Семейная мануфактура и ремесленная пекарня', 'Вековые традиции кавказского гостеприимства и натуральные продукты')
+    ('Vienna', 'Kaiser & Franz Kaffeehaus', 'Specialty Austrian Roastery & Bakery', 'Imperial Viennese coffee heritage with artisanal craft')
 ]
 p = random.choice(presets)
 print('|'.join(p))
@@ -680,7 +680,7 @@ install_3x_ui() {
 
 install_3x_ui
 
-PANEL_PORT=52162
+PANEL_PORT=$(shuf -i 20000-65000 -n 1 2>/dev/null || python3 -c "import random; print(random.randint(20000, 65000))")
 PANEL_USER="admin"
 PANEL_PASS=$(openssl rand -hex 6)
 PANEL_PATH=$(openssl rand -hex 8)
@@ -811,7 +811,7 @@ fi
 
 ufw --force enable 2>/dev/null || true
 
-VLESS_LINK="vless://${CLIENT_UUID}@${DOMAIN}:443?alpn=http%2F1.1&encryption=none&extra=%7B%22mode%22%3A%22auto%22%2C%22xPaddingBytes%22%3A%22100-1000%22%7D&fp=edge&host=${DOMAIN}&mode=auto&path=%2Fapi%2F&security=tls&sni=${DOMAIN}&type=xhttp&x_padding_bytes=100-1000#DAVID-VPN"
+VLESS_LINK="vless://${CLIENT_UUID}@${DOMAIN}:443?alpn=http%2F1.1&encryption=none&extra=%7B%22mode%22%3A%22auto%22%2C%22xPaddingBytes%22%3A%22100-1000%22%7D&fp=edge&host=${DOMAIN}&mode=auto&path=%2Fapi%2F&security=tls&sni=${DOMAIN}&type=xhttp&x_padding_bytes=100-1000#VLESS-XHTTP"
 
 echo ""
 echo "=========================================================================="
