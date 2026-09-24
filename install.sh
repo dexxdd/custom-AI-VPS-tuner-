@@ -1111,6 +1111,7 @@ print('Проверено: прежние подключения и их кон�
 PY_PRESERVED
 fi
 # Exercise the local chain (non-fatal, so network/TLS handshake edge cases do not abort the script).
+XRAY=/usr/local/x-ui/bin/xray-linux-$ARCH
 if [[ -x "$XRAY" ]]; then
   python3 - "$STATE/client.json" "$WORK/test-client.json" "$WORK/test-port" <<'PY_TEST_CLIENT'
 import json, socket, sys
