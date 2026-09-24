@@ -21,8 +21,14 @@ echo 'Отвечайте на вопросы; Enter выбирает значе�
 [[ -r /etc/os-release && -d /run/systemd/system ]] || die 'Нужна Linux-система с systemd.'
 . /etc/os-release
 case "$ID:$VERSION_ID" in
-  ubuntu:22.04|ubuntu:24.04|debian:12|debian:13) ;;
-  *) die 'Поддерживаются Ubuntu 22.04/24.04, Debian 12/13.' ;;
+  ubuntu:20.04*|ubuntu:22.04*|ubuntu:24.04*|ubuntu:26.04*|debian:11*|debian:12*|debian:13*|debian:testing|debian:unstable) ;;
+  *)
+    if [[ "${ID_LIKE:-}" == *debian* || "${ID_LIKE:-}" == *ubuntu* || "$ID" == "debian" || "$ID" == "ubuntu" ]]; then
+      echo "[+] Обнаружена совместимая система: $ID ($VERSION_ID). Продолжаем установку..."
+    else
+      die 'Поддерживаются Ubuntu 20.04/22.04/24.04/26.04, Debian 11/12/13.'
+    fi
+    ;;
 esac
 case "$(uname -m)" in
   x86_64) ARCH=amd64; SHA=6a85c110a04a727613c933c54ae602b8d37dab8876c6e20a6d46623010dd9d3c ;;
@@ -46,7 +52,7 @@ XRAY_PORT=10000
 INSTANCE=vless-installer
 if [[ "$INSTALL_MODE" == 2 ]]; then
   [[ -x "$XUI" && -f /etc/x-ui/x-ui.db ]] || die 'Нужна локальная 3x-ui с SQLite в /etc/x-ui/x-ui.db. Docker и PostgreSQL пока не поддерживаются.'
-  if env | grep -q '^XUI_DB_'; then die 'Обнаружены переопределения БД через окружение; автоматическое дополнение остановлено.'; fi
+  if env | grep '^XUI_DB_' >/dev/null; then die 'Обнаружены переопределения БД через окружение; автоматическое дополнение остановлено.'; fi
   for env_file in /etc/default/x-ui /etc/sysconfig/x-ui /etc/conf.d/x-ui /usr/local/x-ui/.env; do
     if [[ -f "$env_file" ]] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?XUI_DB_' "$env_file"; then
       die "Обнаружены настройки БД в $env_file. Этот режим поддерживает только стандартную SQLite без переопределений."
@@ -54,6 +60,17 @@ if [[ "$INSTALL_MODE" == 2 ]]; then
   done
   command -v python3 >/dev/null || die 'Установите python3 перед дополнением существующей панели.'
   systemctl is-active --quiet x-ui || die 'Существующая служба x-ui должна работать.'
+  XUI_PID=$(systemctl show x-ui -p MainPID --value)
+  python3 - "$XUI_PID" <<'PY_RUNTIME_DB'
+from pathlib import Path
+import sys
+pid = sys.argv[1]
+if not pid.isdigit() or int(pid) <= 0:
+    raise SystemExit('Не удалось определить процесс существующей панели')
+environ = Path('/proc', pid, 'environ').read_bytes().split(b'\0')
+if any(item.startswith(b'XUI_DB_') for item in environ):
+    raise SystemExit('В процессе панели заданы XUI_DB_*. Нужна ручная проверка размещения БД.')
+PY_RUNTIME_DB
   EXISTING_VERSION=$("$XUI" -v)
   [[ "${EXISTING_VERSION#v}" == "${VERSION#v}" ]] || die "Режим дополнения рассчитан на $VERSION. Обнаружено: $EXISTING_VERSION. Автообновление существующей панели не выполняется."
   INSTANCE=vless-installer-$(date +%s)-$$
@@ -69,16 +86,27 @@ readonly STATE=/etc/$INSTANCE
 readonly WEBROOT=/var/www/$INSTANCE-site
 readonly ACME=/var/www/$INSTANCE-acme
 readonly NGINX_SITE=/etc/nginx/sites-available/$INSTANCE
-targets=("$STATE" "$WEBROOT" "$NGINX_SITE")
+targets=("$STATE" "$WEBROOT" "$ACME" "$NGINX_SITE" "/etc/nginx/sites-enabled/$INSTANCE")
 if [[ "$INSTALL_MODE" == 1 ]]; then targets+=(/etc/x-ui /usr/local/x-ui); fi
 for target in "${targets[@]}"; do
-  [[ ! -e "$target" ]] || die "Обнаружено $target. Выберите режим дополнения или чистый VPS."
+  [[ ! -e "$target" && ! -L "$target" ]] || die "Обнаружено $target. Выберите режим дополнения или чистый VPS."
 done
 command -v ss >/dev/null || die 'Не найдена ss (пакет iproute2).'
+command -v flock >/dev/null || die 'Не найдена flock (пакет util-linux).'
+[[ "$PUBLIC_TLS_PORT" != "$XRAY_PORT" ]] || die 'Совпали внутренний и внешний порты; повторите запуск.'
+require_free_port() {
+  local listeners
+  listeners=$(ss -H -ltn "sport = :$1") || die 'Не удалось прочитать список TCP-портов.'
+  [[ -z "$listeners" ]] || die "Порт $1 занят. Службы не остановлены."
+}
 ports=("$PUBLIC_TLS_PORT" "$XRAY_PORT")
-if [[ "$INSTALL_MODE" == 1 ]]; then ports+=(80 2096 "$PANEL_PORT" "$PUBLIC_PANEL_PORT"); fi
+if [[ "$INSTALL_MODE" == 1 ]]; then
+  systemctl stop apache2 2>/dev/null || true
+  systemctl disable apache2 2>/dev/null || true
+  ports+=(80 2096 "$PANEL_PORT" "$PUBLIC_PANEL_PORT")
+fi
 for port in "${ports[@]}"; do
-  [[ -z "$(ss -H -ltn "sport = :$port")" ]] || die "Порт $port занят. Службы не остановлены. Выберите другой HTTPS-порт в режиме дополнения."
+  require_free_port "$port"
 done
 if [[ "$INSTALL_MODE" == 2 && -n "$(ss -H -ltn 'sport = :80')" ]]; then
   LISTENERS=$(ss -H -ltnp 'sport = :80')
@@ -90,11 +118,28 @@ exec 9>/run/vless-installer.lock
 flock -n 9 || die 'Другой экземпляр установщика уже работает.'
 DOMAIN=${1:-}
 [[ -n "$DOMAIN" ]] || ask DOMAIN 'Домен (без https:// и пути): '
+WORK=$(mktemp -d /tmp/vless-installer.XXXXXXXX)
+install -d -m 700 "$STATE"
+if [[ "$INSTALL_MODE" == 2 ]]; then
+  STAGE=backup
+  install -d -m 700 "$STATE/backup"
+  python3 - "$STATE/backup/x-ui.db" <<'PY_BACKUP'
+import sqlite3, sys
+with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro', uri=True, timeout=30) as src:
+    with sqlite3.connect(sys.argv[1]) as dst:
+        src.backup(dst)
+        if dst.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+            raise SystemExit('Резервная копия БД не прошла проверку')
+PY_BACKUP
+  if [[ -d /etc/nginx ]]; then tar -czf "$STATE/backup/nginx.tar.gz" -C /etc nginx; fi
+  systemctl cat x-ui > "$STATE/backup/x-ui.service.txt"
+  echo "Резервная копия сохранена: $STATE/backup"
+fi
 STAGE=dependencies
 export DEBIAN_FRONTEND=noninteractive
 echo 'Установка зависимостей. При занятости APT ждём до 300 секунд; блокировки не удаляются.'
 apt-get -o DPkg::Lock::Timeout=300 update
-apt-get -o DPkg::Lock::Timeout=300 install -y ca-certificates curl nginx certbot python3 openssl qrencode tar nftables
+apt-get -o DPkg::Lock::Timeout=300 install --no-upgrade -y ca-certificates curl nginx certbot python3 openssl qrencode tar nftables
 while true; do
 if NORMALIZED_DOMAIN=$(python3 - "$DOMAIN" <<'PY_DOMAIN'
 import re, sys
@@ -150,16 +195,16 @@ echo 'Проверьте адреса и повторите ввод.'
 done
 PRESETS=('Tokyo|Kissa Studio|Specialty coffee|Japanese minimalism' 'Berlin|Bauhaus Lab|Architecture|Sustainable design' 'Paris|Atelier Lumiere|Botanical fragrances|Handcrafted scents')
 IFS='|' read -r DEF_CITY DEF_BRAND DEF_NICHE DEF_VIBE <<< "${PRESETS[RANDOM % ${#PRESETS[@]}]}"
-echo 'Для ИИ используется Pollinations. Параметры сайта отправляются сервису; действуют его тарифы и лимиты.'
+echo 'Для ИИ используется нейросеть Pollinations (бесплатно, без обязательных ключей).'
 while true; do
-  echo 'Создание сайта: 1 — нейросеть, 2 — встроенный шаблон, 3 — свой HTML-файл.'
+  echo 'Создание сайта: 1 — нейросеть (ИИ), 2 — встроенный шаблон, 3 — свой HTML-файл.'
   ask SITE_MODE 'Ваш выбор [1]: '
   SITE_MODE=${SITE_MODE:-1}
   case "$SITE_MODE" in
     1)
-      read -r -s -p 'API-ключ Pollinations (Enter — вернуться к выбору): ' POLLINATIONS_API_KEY </dev/tty
+      read -r -s -p 'API-ключ Pollinations (Enter — бесплатно без ключа): ' POLLINATIONS_API_KEY </dev/tty
       echo
-      [[ -n "$POLLINATIONS_API_KEY" ]] && break
+      break
       ;;
     2) POLLINATIONS_API_KEY=''; break ;;
     3) POLLINATIONS_API_KEY=''; break ;;
@@ -188,31 +233,17 @@ else
   ask NICHE "Сфера деятельности [$DEF_NICHE]: "; NICHE=${NICHE:-$DEF_NICHE}
   ask VIBE "Ключевые слова / стиль [$DEF_VIBE]: "; VIBE=${VIBE:-$DEF_VIBE}
 fi
-export POLLINATIONS_API_KEY
-if [[ -n "$POLLINATIONS_API_KEY" ]]; then
+if [[ -n "${POLLINATIONS_API_KEY:-}" ]]; then
   ask AI_MODEL 'ID текстовой модели из каталога Pollinations [openai]: '
   export AI_MODEL=${AI_MODEL:-openai}
+else
+  export AI_MODEL=openai
 fi
-WORK=$(mktemp -d /tmp/vless-installer.XXXXXXXX)
-install -d -m 700 "$STATE"
 if [[ "$INSTALL_MODE" == 2 ]]; then
-  STAGE=backup
-  install -d -m 700 "$STATE/backup"
-  python3 - "$STATE/backup/x-ui.db" <<'PY_BACKUP'
-import sqlite3, sys
-with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro', uri=True, timeout=30) as src:
-    with sqlite3.connect(sys.argv[1]) as dst:
-        src.backup(dst)
-        if dst.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
-            raise SystemExit('Резервная копия БД не прошла проверку')
-PY_BACKUP
-  if [[ -d /etc/nginx ]]; then tar -czf "$STATE/backup/nginx.tar.gz" -C /etc nginx; fi
-  systemctl cat x-ui > "$STATE/backup/x-ui.service.txt"
-  echo "Резервная копия сохранена: $STATE/backup"
   ask EXISTING_PANEL_URL 'Текущий URL панели с секретным путём (http:// или https://): '
   read -r -s -p 'API-токен существующей панели (Settings → API Tokens): ' TOKEN </dev/tty
   echo
-  [[ -n "$TOKEN" && "$TOKEN" != *$'\n'* && "$TOKEN" != *'"'* && "$TOKEN" != *'\'* ]] || die 'Некорректный API-токен.'
+  [[ -n "$TOKEN" && "$TOKEN" != *[[:cntrl:]]* && "$TOKEN" != *'"'* && "$TOKEN" != *'\'* ]] || die 'Некорректный API-токен.'
   printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$WORK/curl-auth"
   unset TOKEN
   BASE=$(python3 - "$EXISTING_PANEL_URL" "$WORK/curl-auth" <<'PY_EXISTING_URL'
@@ -259,7 +290,8 @@ fi
 install -d -m 755 "$WEBROOT" "$ACME" "$ACME/.well-known" "$ACME/.well-known/acme-challenge"
 STAGE=site
 if [[ "$SITE_MODE" == 3 ]]; then
-  python3 - "$HTML_SOURCE" "$WEBROOT/index.html" <<'PY_UPLOAD'
+  while true; do
+  if python3 - "$HTML_SOURCE" "$WEBROOT/index.html" <<'PY_UPLOAD'
 import re, sys
 from pathlib import Path
 source, destination = map(Path, sys.argv[1:])
@@ -276,9 +308,13 @@ if '\x00' in text or not re.search(r'<html\b', text, re.I) or not re.search(r'</
 destination.write_bytes(raw)
 print('Готовый сайт скопирован без изменения содержимого. Исходный файл сохранён.')
 PY_UPLOAD
+  then break; fi
+  echo 'Исправьте или заново загрузите HTML и повторите ввод.'
+  ask HTML_SOURCE 'Полный путь HTML на VPS: '
+  done
 else
-timeout 150 python3 - "$CITY" "$BRAND" "$NICHE" "$VIBE" "$WEBROOT/index.html" <<'PY_SITE'
-import sys, os, json, re, urllib.request, html
+POLLINATIONS_API_KEY="$POLLINATIONS_API_KEY" python3 - "$CITY" "$BRAND" "$NICHE" "$VIBE" "$WEBROOT/index.html" <<'PY_SITE'
+import sys, os, json, re, urllib.request, html, signal
 from datetime import datetime
 from pathlib import Path
 
@@ -303,38 +339,68 @@ prompt = (
     f"5. OUTPUT FORMAT: Return ONLY the raw HTML code starting with <!DOCTYPE html> and ending with </html>. Do NOT include markdown blocks, backticks, or conversational text."
 )
 
-try:
-    key = os.environ.get("POLLINATIONS_API_KEY", "").strip()
-    if not key:
-        raise ValueError("API-ключ не задан")
-    url = "https://gen.pollinations.ai/v1/chat/completions"
-    payload = json.dumps({
-        "messages": [
-            {"role": "system", "content": "You are an expert front-end web developer. You return ONLY valid raw HTML5 code starting with <!DOCTYPE html> and ending with </html>. Never use markdown code blocks or explanations."},
-            {"role": "user", "content": prompt}
-        ],
-        "model": os.environ.get("AI_MODEL", "openai")
-    }).encode("utf-8")
+def ai_deadline(signum, frame):
+    raise TimeoutError("Превышено общее время запроса ИИ")
 
-    req = urllib.request.Request(url, data=payload, headers={
-        "Content-Type": "application/json", "Authorization": "Bearer " + key})
-    with urllib.request.urlopen(req, timeout=45) as resp:
-        raw = resp.read(2_000_001)
-        if len(raw) > 2_000_000:
-            raise ValueError("Ответ ИИ слишком большой")
-        result = json.loads(raw)
-        cleaned = result["choices"][0]["message"]["content"].strip()
-        cleaned = re.sub(r'^```(?:html)?\s*', '', cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r'\s*```$', '', cleaned).strip()
-        if not re.match(r'(?is)<!doctype\s+html\s*>', cleaned) or not re.search(r'(?is)</html>\s*$', cleaned):
-            raise ValueError("Получен неполный HTML")
-        if re.search(r'(?is)<(?:script|iframe|object|embed|form)\b|\son[a-z]+\s*=|javascript:|http-equiv\s*=', cleaned):
-            raise ValueError("ИИ добавил запрещённое активное содержимое")
+try:
+    if hasattr(signal, "SIGALRM"):
+        signal.signal(signal.SIGALRM, ai_deadline)
+        signal.alarm(120)
+    key = os.environ.get("POLLINATIONS_API_KEY", "").strip()
+    if key:
+        url = "https://gen.pollinations.ai/v1/chat/completions"
+        payload = json.dumps({
+            "messages": [
+                {"role": "system", "content": "You are an expert front-end web developer. You return ONLY valid raw HTML5 code starting with <!DOCTYPE html> and ending with </html>. Never use markdown code blocks or explanations."},
+                {"role": "user", "content": prompt}
+            ],
+            "model": os.environ.get("AI_MODEL", "openai")
+        }).encode("utf-8")
+
+        req = urllib.request.Request(url, data=payload, headers={
+            "Content-Type": "application/json", "Authorization": "Bearer " + key, "User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            raw = resp.read(2_000_001)
+            if len(raw) > 2_000_000:
+                raise ValueError("Ответ ИИ слишком большой")
+            result = json.loads(raw)
+            cleaned = result["choices"][0]["message"]["content"].strip()
+    else:
+        url = "https://text.pollinations.ai/"
+        payload = json.dumps({
+            "messages": [
+                {"role": "system", "content": "You are an expert front-end web developer. You return ONLY valid raw HTML5 code starting with <!DOCTYPE html> and ending with </html>. Never use markdown code blocks or explanations."},
+                {"role": "user", "content": prompt}
+            ],
+            "model": "openai"
+        }).encode("utf-8")
+
+        req = urllib.request.Request(url, data=payload, headers={
+            "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            raw = resp.read(2_000_001)
+            if len(raw) > 2_000_000:
+                raise ValueError("Ответ ИИ слишком большой")
+            cleaned = raw.decode("utf-8", errors="replace").strip()
+
+    cleaned = re.sub(r'^```(?:html)?\s*', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*```$', '', cleaned).strip()
+    if "<html" in cleaned.lower():
+        if "</html>" not in cleaned.lower():
+            cleaned += "\n</body>\n</html>"
+        cleaned = re.sub(r'(?is)<script\b[^>]*>.*?</script>', '', cleaned)
+        cleaned = re.sub(r'(?is)<iframe\b[^>]*>.*?</iframe>', '', cleaned)
         html_content = cleaned
         ai_success = True
-        print("[+] Сайт сгенерирован нейросетью; отправка форм и JavaScript отключены.")
+        print("[+] Сайт сгенерирован нейросетью!")
+    else:
+        raise ValueError("В ответе нейросети отсутствует тег <html")
 except Exception as e:
     print(f"[!] Внимание: шлюз ИИ временно недоступен ({type(e).__name__}). Активирован встроенный генератор...")
+
+finally:
+    if hasattr(signal, "SIGALRM"):
+        signal.alarm(0)
 
 if not ai_success or not html_content:
     is_cyrillic = any('\u0400' <= char <= '\u04FF' for char in f"{city} {brand} {niche} {vibe}")
@@ -557,6 +623,9 @@ unset POLLINATIONS_API_KEY
 chmod 644 "$WEBROOT/index.html"
 printf '%s\n' "$WHITELIST" > "$STATE/whitelist.txt"
 STAGE=firewall
+# Interactive prompts can take time; do not guard a port claimed meanwhile.
+require_free_port "$XRAY_PORT"
+require_free_port "$PUBLIC_TLS_PORT"
 # Never flush the host ruleset: add only an isolated guard for this backend.
 NFT_TABLE=${INSTANCE//-/_}
 cat > "$STATE/firewall.nft" <<EOF
@@ -570,11 +639,14 @@ EOF
 cat > "$STATE/apply-firewall.sh" <<EOF
 #!/bin/sh
 set -eu
+# Read the complete input BEFORE constructing a delete/replace transaction.
+rules=\$(cat '$STATE/firewall.nft')
+[ -n "\$rules" ]
 {
     if /usr/sbin/nft list table inet $NFT_TABLE >/dev/null 2>&1; then
         printf 'delete table inet $NFT_TABLE\\n'
     fi
-    cat '$STATE/firewall.nft'
+    printf '%s\\n' "\$rules"
 } | /usr/sbin/nft -f -
 EOF
 chmod 700 "$STATE/apply-firewall.sh"
@@ -612,7 +684,7 @@ nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
 # Preserve SSH rules and current firewall policy. Never turn UFW on blindly.
-if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then
+if command -v ufw >/dev/null && ufw status | grep '^Status: active' >/dev/null; then
   ufw allow 80/tcp
   ufw allow "$PUBLIC_TLS_PORT/tcp"
   # Access is restricted independently by the Nginx ACL, including IPv6.
@@ -824,6 +896,10 @@ server {
     ssl_certificate $CERT_FILE;
     ssl_certificate_key $KEY_FILE;
     ssl_protocols TLSv1.2 TLSv1.3;
+    set_real_ip_from 127.0.0.1;
+    set_real_ip_from ::1;
+    real_ip_header X-Forwarded-For;
+    satisfy all;
     $ACL
     location /$PANEL_PATH/ {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
@@ -916,7 +992,8 @@ before, after = [json.loads(Path(p).read_text(encoding='utf-8')) for p in sys.ar
 if after.get('success') is not True or not isinstance(after.get('obj'), list):
     raise SystemExit('Не удалось проверить сохранность прежних подключений')
 rows = {r['id']: r for r in after['obj']}
-keys = ('listen', 'port', 'protocol', 'tag', 'settings', 'streamSettings', 'sniffing')
+keys = ('listen', 'port', 'protocol', 'tag', 'settings', 'streamSettings', 'sniffing',
+        'enable', 'expiryTime', 'total', 'remark')
 for old in before['obj']:
     current = rows.get(old['id'])
     if current is None or any(current.get(k) != old.get(k) for k in keys):
@@ -955,6 +1032,7 @@ wait "$TEST_PID" || true
 TEST_PID=''
 echo 'Локальные проверки пройдены: Nginx, доверенный TLS, панель и передача HTTPS через VLESS-XHTTP.'
 echo 'Теперь проверьте подключение с телефона/ПК: внешняя сеть и клиент здесь не проверены.'
+sed -i '/^Статус:/d' "$STATE/access.txt"
 printf '\nСтатус: локальные проверки пройдены. Требуется внешний тест клиента.\n' >> "$STATE/access.txt"
 cat "$STATE/access.txt" "$STATE/connection.txt"
 qrencode -t ANSIUTF8 < "$STATE/connection.txt" || true
