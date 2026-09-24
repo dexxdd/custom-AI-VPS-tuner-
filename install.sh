@@ -248,10 +248,43 @@ if [[ "$INSTALL_MODE" == 1 ]]; then
 echo -e "${CLR_GREEN}│ ${CLR_WHITE}Для веб-панели 3X-UI также нужен открытый порт TCP 8443.${CLR_RESET}"
 fi
 echo -e "${CLR_GREEN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
-ADMIN_IP=${SSH_CONNECTION:-}
-ADMIN_IP=${ADMIN_IP%% *}
-ADMIN_IP=${ADMIN_IP:-${SSH_CLIENT:-}}
-ADMIN_IP=${ADMIN_IP%% *}
+ADMIN_IP=$(python3 - "$$" <<'PY_ADMIN_IP'
+import ipaddress, os, sys
+
+def candidate(environ):
+    for key in ('SSH_CONNECTION', 'SSH_CLIENT'):
+        value = environ.get(key, '').strip().split()
+        if value:
+            try:
+                return str(ipaddress.ip_address(value[0]))
+            except ValueError:
+                pass
+    return ''
+
+value = candidate(os.environ)
+pid = int(sys.argv[1])
+for _ in range(12):
+    if value or pid <= 1:
+        break
+    try:
+        raw = open(f'/proc/{pid}/environ', 'rb').read().split(b'\0')
+        env = {}
+        for item in raw:
+            if b'=' in item:
+                key, val = item.split(b'=', 1)
+                env[key.decode(errors='ignore')] = val.decode(errors='ignore')
+        value = candidate(env)
+        stat = open(f'/proc/{pid}/stat', encoding='ascii').read()
+        pid = int(stat.rsplit(')', 1)[1].strip().split()[1])
+    except (OSError, ValueError, IndexError):
+        break
+print(value)
+PY_ADMIN_IP
+)
+if [[ -z "$ADMIN_IP" ]]; then
+  WHO_LINE=$(who -m 2>/dev/null || true)
+  if [[ "$WHO_LINE" =~ \(([^()]*)\) ]]; then ADMIN_IP=${BASH_REMATCH[1]}; fi
+fi
 echo ""
 echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 2: БЕЛЫЙ СПИСОК IP ДЛЯ ОГРАНИЧЕНИЯ ДОСТУПА ${CLR_CYAN}]───────────────────────${CLR_RESET}"
 echo -e "${CLR_CYAN}│ ${CLR_WHITE}Белый список ограничивает доступ к VPN и панели 3X-UI от посторонних.${CLR_RESET}"
@@ -264,6 +297,10 @@ echo -e "${CLR_CYAN}└───────────────────
 while true; do
   ask WHITELIST "Разрешённые IP/CIDR (Enter — текущий IP, all — без ограничений) [${ADMIN_IP:-нужно ввести}]: "
   WHITELIST=${WHITELIST:-$ADMIN_IP}
+  if [[ -z "$WHITELIST" ]]; then
+    echo -e "${CLR_YELLOW}Текущий IP невозможно определить (например, при запуске из консоли VPS). Введите публичный IP/CIDR вручную или явно укажите all.${CLR_RESET}"
+    continue
+  fi
   if ACL=$(python3 - "$WHITELIST" <<'PY_ACL'
 import ipaddress, sys
 s = sys.argv[1].strip()
@@ -1493,21 +1530,107 @@ if command -v ufw >/dev/null && ufw status | grep '^Status: active' >/dev/null; 
   # Access is restricted independently by the Nginx ACL, including IPv6.
   if [[ "$INSTALL_MODE" == 1 ]]; then ufw allow "$PUBLIC_PANEL_PORT/tcp"; fi
 fi
-until certbot certonly --webroot -w "$ACME" -d "$DOMAIN" --cert-name "$DOMAIN" \
-  --non-interactive --agree-tos --register-unsafely-without-email; do
+change_certificate_domain() {
+  local CANDIDATE NORMALIZED_CANDIDATE OLD_DOMAIN
+  while true; do
+    ask CANDIDATE 'Новый домен/поддомен (без https:// и пути): '
+    if NORMALIZED_CANDIDATE=$(python3 - "$CANDIDATE" <<'PY_NEW_DOMAIN'
+import re, sys
+domain = sys.argv[1].strip().rstrip('.').lower()
+try:
+    domain = domain.encode('idna').decode('ascii')
+except UnicodeError:
+    raise SystemExit('Некорректный домен')
+labels = domain.split('.')
+if len(domain) > 253 or len(labels) < 2 or not re.fullmatch(r'[a-z][a-z0-9-]*', labels[-1]):
+    raise SystemExit('Введите доменное имя без протокола, порта и пути')
+if any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', s) for s in labels):
+    raise SystemExit('Некорректное доменное имя')
+print(domain)
+PY_NEW_DOMAIN
+    ); then
+      [[ "$NORMALIZED_CANDIDATE" != "$DOMAIN" ]] || { echo 'Введите другой домен.'; continue; }
+      if ! getent ahosts "$NORMALIZED_CANDIDATE" >/dev/null 2>&1; then
+        echo 'Новый домен пока не разрешается. Создайте A/AAAA-запись и повторите ввод.'
+        continue
+      fi
+      nginx -T > "$WORK/nginx-domain-change.txt" 2>&1
+      if ! python3 - "$NORMALIZED_CANDIDATE" "$WORK/nginx-domain-change.txt" <<'PY_NEW_NGINX_DOMAIN'
+import fnmatch, re, sys
+from pathlib import Path
+domain = sys.argv[1]
+config = re.sub(r'(?m)#.*$', '', Path(sys.argv[2]).read_text(encoding='utf-8'))
+for names in re.findall(r'\bserver_name\s+([^;]+);', config):
+    for name in names.split():
+        name = name.strip('"\'').lower()
+        if name.startswith('~') or fnmatch.fnmatchcase(domain, name) or (name.startswith('.') and (domain == name[1:] or domain.endswith(name))):
+            raise SystemExit('Новый домен уже обслуживается Nginx или требует ручной проверки regex server_name')
+PY_NEW_NGINX_DOMAIN
+      then
+        echo 'Выберите свободный домен, который ещё не обслуживается Nginx.'
+        continue
+      fi
+      break
+    fi
+    echo 'Некорректный домен. Повторите ввод.'
+  done
+  OLD_DOMAIN=$DOMAIN
+  DOMAIN=$NORMALIZED_CANDIDATE
+  python3 - "$OLD_DOMAIN" "$DOMAIN" "$NGINX_SITE" "$WEBROOT/index.html" "$SITE_MODE" <<'PY_REPLACE_DOMAIN'
+import sys
+from pathlib import Path
+old, new, nginx_path, html_path, site_mode = sys.argv[1:]
+nginx = Path(nginx_path)
+text = nginx.read_text(encoding='utf-8')
+if old not in text:
+    raise SystemExit('Старый домен не найден в конфигурации установщика')
+nginx.write_text(text.replace(old, new), encoding='utf-8')
+if site_mode == '1':
+    page = Path(html_path)
+    html = page.read_text(encoding='utf-8')
+    page.write_text(html.replace(old, new), encoding='utf-8')
+PY_REPLACE_DOMAIN
+  nginx -t
+  systemctl reload nginx
+  echo -e "${CLR_GREEN}[+] Домен установки изменён: $OLD_DOMAIN → $DOMAIN${CLR_RESET}"
+}
+
+while true; do
+  CERT_FILE=/etc/letsencrypt/live/$DOMAIN/fullchain.pem
+  KEY_FILE=/etc/letsencrypt/live/$DOMAIN/privkey.pem
+  if [[ -s "$CERT_FILE" && -s "$KEY_FILE" ]] \
+     && openssl x509 -checkend 86400 -noout -in "$CERT_FILE" >/dev/null 2>&1 \
+     && openssl x509 -checkhost "$DOMAIN" -noout -in "$CERT_FILE" >/dev/null 2>&1; then
+    echo -e "${CLR_GREEN}[+] Используется уже установленный действующий сертификат для $DOMAIN.${CLR_RESET}"
+    break
+  fi
+  : > "$WORK/certbot.log"
+  if certbot certonly --webroot -w "$ACME" -d "$DOMAIN" --cert-name "$DOMAIN" \
+    --non-interactive --agree-tos --register-unsafely-without-email 2>&1 | tee "$WORK/certbot.log"; then
+    break
+  fi
   echo ""
-  echo -e "${CLR_RED}┌─── [ ⚠️  НЕ УДАЛОСЬ ВЫПУСТИТЬ SSL-СЕРТИФИКАТ ]─────────────────────────────${CLR_RESET}"
-  echo -e "${CLR_RED}│ Сертификат Let's Encrypt не получен для домена $DOMAIN.${CLR_RESET}"
-  echo -e "${CLR_RED}│ Проверьте:${CLR_RESET}"
-  echo -e "${CLR_RED}│   1. Порт 80 открыт в панели хостинга / Security Groups?${CLR_RESET}"
-  echo -e "${CLR_RED}│   2. А-запись $DOMAIN указывает именно на IP этого VPS?${CLR_RESET}"
-  echo -e "${CLR_RED}│   3. В Cloudflare выключено проксирование (DNS Only, серый значок)?${CLR_RESET}"
-  echo -e "${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
-  ask RETRY_CERT 'После исправления: 1 — повторить, 2 — выйти [2]: '
-  [[ "$RETRY_CERT" == 1 ]] || die 'Установка остановлена на выпуске сертификата.'
+  if grep -F 'too many certificates' "$WORK/certbot.log" >/dev/null; then
+    RETRY_AFTER=$(sed -n 's/.*retry after \(.* UTC\).*/\1/p' "$WORK/certbot.log")
+    echo -e "${CLR_RED}┌─── [ ⚠️  ЛИМИТ LET'S ENCRYPT ДЛЯ ЭТОГО ДОМЕНА ]────────────────────────────${CLR_RESET}"
+    echo -e "${CLR_RED}│ За последние 7 дней уже выпущено 5 сертификатов для точно такого же домена.${CLR_RESET}"
+    echo -e "${CLR_RED}│ Повторите выпуск после: ${CLR_WHITE}${RETRY_AFTER:-времени, указанного Certbot выше}${CLR_RESET}"
+    echo -e "${CLR_RED}│ Удаление или отзыв старых сертификатов лимит не сбрасывает.${CLR_RESET}"
+    echo -e "${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+    ask RETRY_CERT '1 — повторить позже, 2 — выйти, 3 — заменить домен и продолжить [2]: '
+  else
+    echo -e "${CLR_RED}┌─── [ ⚠️  НЕ УДАЛОСЬ ВЫПУСТИТЬ SSL-СЕРТИФИКАТ ]─────────────────────────────${CLR_RESET}"
+    echo -e "${CLR_RED}│ Проверьте порт 80, A/AAAA-записи и режим Cloudflare DNS Only.${CLR_RESET}"
+    echo -e "${CLR_RED}│ Точная причина показана в выводе Certbot выше.${CLR_RESET}"
+    echo -e "${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+    ask RETRY_CERT '1 — повторить, 2 — выйти, 3 — заменить домен и продолжить [2]: '
+  fi
+  case "${RETRY_CERT:-2}" in
+    1) ;;
+    3) change_certificate_domain ;;
+    *) die 'Установка остановлена на выпуске сертификата.' ;;
+  esac
 done
-CERT_FILE=/etc/letsencrypt/live/$DOMAIN/fullchain.pem
-KEY_FILE=/etc/letsencrypt/live/$DOMAIN/privkey.pem
 [[ -s "$CERT_FILE" && -s "$KEY_FILE" ]]
 XHTTP_PATH=/$(openssl rand -hex 16)/
 CLIENT_UUID=$(python3 -c 'import uuid; print(uuid.uuid4())')
@@ -1606,7 +1729,7 @@ inbound = dict(remark='VLESS-XHTTP', enable=True, expiryTime=0, total=0,
     listen='127.0.0.1', port=int(port), protocol='vless', tag='vless-xhttp-' + uid[:12],
     settings=dict(clients=[client], decryption='none', fallbacks=[]),
     streamSettings=dict(network='xhttp', security='none',
-                        xhttpSettings=dict(host=domain, path=path, mode='auto')),
+                        xhttpSettings=dict(host=domain, path=path, mode='stream-up')),
     sniffing=dict(enabled=True, destOverride=['http','tls'], routeOnly=True))
 Path(out).write_text(json.dumps(inbound), encoding='utf-8')
 PY_INBOUND
@@ -1632,7 +1755,7 @@ if r.get('success') is not True or type(inbound_id) is not int or inbound_id < 1
 import os
 public_port = int(os.environ.get('PUBLIC_TLS_PORT', '443'))
 host = dict(inboundIds=[inbound_id], hosts=[domain], port=public_port, security='tls',
-            sni=domain, hostHeader=domain, path=path, alpn=['http/1.1'],
+            sni=domain, hostHeader=domain, path=path, alpn=['h2'],
             fingerprint='chrome', allowInsecure=False, isDisabled=False,
             isHidden=False, remark='VLESS-XHTTP-TLS', sortOrder=0)
 Path(output).write_text(json.dumps(host), encoding='utf-8')
@@ -1653,7 +1776,7 @@ h = rows[0]
 for key, value in dict(address=expected['hosts'][0], inboundId=expected['inboundIds'][0],
                        port=expected['port'], security='tls', sni=expected['sni'],
                        hostHeader=expected['hostHeader'], path=expected['path'],
-                       alpn=['http/1.1'], fingerprint='chrome').items():
+                       alpn=['h2'], fingerprint='chrome').items():
     if h.get(key) != value:
         raise SystemExit('Неверный параметр публичного Host: ' + key)
 if h.get('isDisabled') or h.get('isHidden') or h.get('allowInsecure'):
@@ -1670,8 +1793,9 @@ SITE_CSP="add_header Content-Security-Policy \"default-src 'none'; style-src 'un
 if [[ "$SITE_MODE" == 2 ]]; then SITE_CSP=''; fi
 cat >> "$NGINX_SITE" <<EOF
 server {
-    listen $PUBLIC_TLS_PORT ssl;
-    http2 on;
+    # The listen-parameter form works with both older distro Nginx packages
+    # and current releases (new releases may only print a deprecation warning).
+    listen $PUBLIC_TLS_PORT ssl http2;
     server_name $DOMAIN;
     ssl_certificate $CERT_FILE;
     ssl_certificate_key $KEY_FILE;
@@ -1688,14 +1812,16 @@ server {
         allow 127.0.0.1;
         allow ::1;
         $ACL
-        proxy_pass http://127.0.0.1:$XRAY_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Host $DOMAIN;
-        proxy_set_header Connection "";
-        proxy_buffering off;
-        proxy_request_buffering off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
+        # XHTTP stream-up speaks HTTP/2 to the local Xray backend.  Using
+        # ordinary HTTP/1.1 proxy_pass here can truncate its streaming reply.
+        grpc_pass grpc://127.0.0.1:$XRAY_PORT;
+        grpc_set_header Host $DOMAIN;
+        grpc_set_header X-Real-IP \$remote_addr;
+        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        grpc_set_header X-Forwarded-Proto https;
+        grpc_read_timeout 3600s;
+        grpc_send_timeout 3600s;
+        client_body_timeout 3600s;
         client_max_body_size 0;
         access_log off;
     }
@@ -1737,7 +1863,7 @@ server {
 EOF
 fi
 if [[ -s /proc/net/if_inet6 ]]; then
-  sed -i "/listen $PUBLIC_TLS_PORT ssl;/a\\    listen [::]:$PUBLIC_TLS_PORT ssl;" "$NGINX_SITE"
+  sed -i "/listen $PUBLIC_TLS_PORT ssl http2;/a\\    listen [::]:$PUBLIC_TLS_PORT ssl http2;" "$NGINX_SITE"
   if [[ "$INSTALL_MODE" == 1 ]]; then sed -i "/listen $PUBLIC_PANEL_PORT ssl;/a\\    listen [::]:$PUBLIC_PANEL_PORT ssl;" "$NGINX_SITE"; fi
 fi
 nginx -t
@@ -1794,15 +1920,15 @@ uid, domain, path, directory = sys.argv[1:]
 import os
 public_port = int(os.environ.get('PUBLIC_TLS_PORT', '443'))
 query = urlencode(dict(encryption='none', security='tls', sni=domain, fp='chrome',
-                       alpn='http/1.1', type='xhttp', host=domain, path=path, mode='auto'))
+                       alpn='h2', type='xhttp', host=domain, path=path, mode='stream-up'))
 link = f'vless://{uid}@{domain}:{public_port}?{query}#VLESS-XHTTP'
 Path(directory, 'connection.txt').write_text(link+'\n', encoding='utf-8')
 client = dict(log=dict(loglevel='warning'), inbounds=[dict(listen='127.0.0.1', port=10808,
     protocol='socks', settings=dict(auth='noauth', udp=True))], outbounds=[dict(
     protocol='vless', settings=dict(vnext=[dict(address=domain, port=public_port,
         users=[dict(id=uid, encryption='none')])]), streamSettings=dict(network='xhttp',
-    security='tls', tlsSettings=dict(serverName=domain, fingerprint='chrome', alpn=['http/1.1']),
-    xhttpSettings=dict(host=domain, path=path, mode='auto')))])
+    security='tls', tlsSettings=dict(serverName=domain, fingerprint='chrome', alpn=['h2']),
+    xhttpSettings=dict(host=domain, path=path, mode='stream-up')))])
 Path(directory, 'client.json').write_text(json.dumps(client, indent=2), encoding='utf-8')
 PY_CLIENT
 find "$STATE" -maxdepth 1 -type f ! -name apply-firewall.sh -exec chmod 600 {} +
@@ -1836,6 +1962,7 @@ with socket.socket() as sock:
 cfg = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
 cfg['inbounds'][0]['port'] = port
 cfg['outbounds'][0]['settings']['vnext'][0]['address'] = '127.0.0.1'
+cfg['log']['loglevel'] = 'info'
 Path(sys.argv[2]).write_text(json.dumps(cfg), encoding='utf-8')
 Path(sys.argv[3]).write_text(str(port), encoding='utf-8')
 PY_TEST_CLIENT
@@ -1848,17 +1975,77 @@ for ((n=0; n<15; n++)); do
   if [[ -n "$(ss -H -ltn "sport = :$TEST_PORT")" ]]; then ready=1; break; fi
   sleep 1
 done
-[[ $ready == 1 ]] || die "Тестовый Xray не запустился. См. $STATE/selftest.log"
-curl -fsS --noproxy '' --proxy "socks5h://127.0.0.1:$TEST_PORT" \
-  --connect-timeout 15 --max-time 45 https://example.com/ -o /dev/null \
-  || die "Сквозной тест VLESS-XHTTP не передал HTTPS-трафик. См. $STATE/selftest.log"
+show_selftest_diagnostics() {
+  echo -e "${CLR_RED}Последние сообщения тестового Xray:${CLR_RESET}" >&2
+  tail -n 80 "$STATE/selftest.log" >&2 || true
+  echo -e "${CLR_RED}Последние ошибки Nginx:${CLR_RESET}" >&2
+  tail -n 40 /var/log/nginx/error.log >&2 || true
+}
+[[ $ready == 1 ]] || { show_selftest_diagnostics; die "Тестовый Xray не запустился. Полный журнал: $STATE/selftest.log"; }
+# Two independent HTTPS destinations avoid rejecting a working tunnel merely
+# because one public test site is temporarily unreachable from this VPS.
+run_tunnel_probe() {
+  if curl -fsS --noproxy '' --proxy "socks5h://127.0.0.1:$TEST_PORT" \
+    --connect-timeout 15 --max-time 45 https://example.com/ -o /dev/null \
+    >> "$STATE/selftest.log" 2>&1; then
+    return 0
+  fi
+  curl -fsS --noproxy '' --proxy "socks5h://127.0.0.1:$TEST_PORT" \
+    --connect-timeout 15 --max-time 45 https://www.cloudflare.com/cdn-cgi/trace -o /dev/null \
+    >> "$STATE/selftest.log" 2>&1
+}
+TUNNEL_VERIFIED=1
+while ! run_tunnel_probe; do
+  show_selftest_diagnostics
+  echo ""
+  echo -e "${CLR_YELLOW}┌─── [ ⚠️  ССЫЛКА КЛИЕНТА НЕ ПРОШЛА ПРОВЕРКУ ]───────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_YELLOW}│ Созданные параметры выглядят корректно, но трафик через них сейчас не прошёл.${CLR_RESET}"
+  echo -e "${CLR_YELLOW}│ Это не доказывает, что строка ссылки испорчена: причиной также могут быть${CLR_RESET}"
+  echo -e "${CLR_YELLOW}│ Nginx, Xray, DNS или исходящая сеть VPS.${CLR_RESET}"
+  echo -e "${CLR_YELLOW}│${CLR_RESET}"
+  echo -e "${CLR_YELLOW}│  1 — повторить сквозной тест${CLR_RESET}"
+  echo -e "${CLR_YELLOW}│  2 — перезапустить Nginx и Xray, затем повторить${CLR_RESET}"
+  echo -e "${CLR_YELLOW}│  3 — завершить, сохранив ссылку как НЕПРОВЕРЕННУЮ${CLR_RESET}"
+  echo -e "${CLR_YELLOW}│  4 — остановить установку и сохранить систему для диагностики${CLR_RESET}"
+  echo -e "${CLR_YELLOW}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+  read -r -p 'Ваш выбор [1-4]: ' SELFTEST_ACTION
+  case "$SELFTEST_ACTION" in
+    1) ;;
+    2)
+      nginx -t
+      systemctl restart nginx x-ui
+      ready=0
+      for ((n=0; n<30; n++)); do
+        if [[ -n "$(ss -H -ltn "sport = :$XRAY_PORT")" ]]; then ready=1; break; fi
+        sleep 1
+      done
+      [[ $ready == 1 ]] || { show_selftest_diagnostics; die 'После перезапуска Xray не открыл локальный порт.'; }
+      ;;
+    3)
+      TUNNEL_VERIFIED=0
+      break
+      ;;
+    4)
+      die "Установка остановлена пользователем. Настройки сохранены для диагностики; журнал: $STATE/selftest.log"
+      ;;
+    *) echo -e "${CLR_RED}Введите число от 1 до 4.${CLR_RESET}" ;;
+  esac
+done
 kill "$TEST_PID" 2>/dev/null || true
 wait "$TEST_PID" 2>/dev/null || true
 TEST_PID=''
-echo -e "${CLR_GREEN}[+] Локальный сквозной тест VLESS-XHTTP успешно пройден!${CLR_RESET}"
+if [[ $TUNNEL_VERIFIED == 1 ]]; then
+  echo -e "${CLR_GREEN}[+] Локальный сквозной тест VLESS-XHTTP успешно пройден!${CLR_RESET}"
+else
+  echo -e "${CLR_YELLOW}[!] Установка продолжена по выбору пользователя; ссылка клиента НЕ ПРОВЕРЕНА.${CLR_RESET}"
+fi
 
 sed -i '/^Статус:/d' "$STATE/access.txt" 2>/dev/null || true
-printf '\nСтатус: Установка успешно завершена.\n' >> "$STATE/access.txt"
+if [[ $TUNNEL_VERIFIED == 1 ]]; then
+  printf '\nСтатус: Установка успешно завершена; ссылка клиента прошла сквозной тест.\n' >> "$STATE/access.txt"
+else
+  printf '\nСтатус: Установка завершена с предупреждением; ссылка клиента НЕ ПРОВЕРЕНА и не должна выдаваться пользователям.\n' >> "$STATE/access.txt"
+fi
 
 VLESS_LINK=$(cat "$STATE/connection.txt" 2>/dev/null || true)
 if [[ "$PUBLIC_TLS_PORT" == 443 ]]; then
@@ -1885,9 +2072,15 @@ fi
 
 echo ""
 echo ""
-echo -e "${CLR_GREEN}╔══════════════════════════════════════════════════════════════════════════════╗${CLR_RESET}"
-echo -e "${CLR_GREEN}║${CLR_BOLD}${CLR_WHITE}                  🎉 УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!                             ${CLR_GREEN}║${CLR_RESET}"
-echo -e "${CLR_GREEN}╚══════════════════════════════════════════════════════════════════════════════╝${CLR_RESET}"
+if [[ $TUNNEL_VERIFIED == 1 ]]; then
+  echo -e "${CLR_GREEN}╔══════════════════════════════════════════════════════════════════════════════╗${CLR_RESET}"
+  echo -e "${CLR_GREEN}║${CLR_BOLD}${CLR_WHITE}                  🎉 УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!                             ${CLR_GREEN}║${CLR_RESET}"
+  echo -e "${CLR_GREEN}╚══════════════════════════════════════════════════════════════════════════════╝${CLR_RESET}"
+else
+  echo -e "${CLR_YELLOW}╔══════════════════════════════════════════════════════════════════════════════╗${CLR_RESET}"
+  echo -e "${CLR_YELLOW}║${CLR_BOLD}${CLR_WHITE}           ⚠️  УСТАНОВКА ЗАВЕРШЕНА: VPN-ССЫЛКА НЕ ПРОВЕРЕНА                  ${CLR_YELLOW}║${CLR_RESET}"
+  echo -e "${CLR_YELLOW}╚══════════════════════════════════════════════════════════════════════════════╝${CLR_RESET}"
+fi
 echo ""
 
 echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} 🌐 ВАШ САЙТ-ПРИКРЫТИЕ ${CLR_CYAN}]─────────────────────────────────────────${CLR_RESET}"
@@ -1912,13 +2105,16 @@ echo ""
 
 echo -e "${CLR_MAGENTA}┌─── [${CLR_WHITE}${CLR_BOLD} 🔑 ССЫЛКА ДЛЯ ПОДКЛЮЧЕНИЯ КЛИЕНТА (VLESS-XHTTP) ${CLR_MAGENTA}]──────────────${CLR_RESET}"
 echo -e "${CLR_MAGENTA}│ ${CLR_WHITE}Скопируйте эту ссылку целиком и вставьте в ваше VPN-приложение:${CLR_RESET}"
+if [[ $TUNNEL_VERIFIED != 1 ]]; then
+echo -e "${CLR_MAGENTA}│ ${CLR_YELLOW}⚠️  Не передавайте эту ссылку пользователям: сквозной тест не пройден.${CLR_RESET}"
+fi
 echo -e "${CLR_MAGENTA}│${CLR_RESET}"
 echo -e "${CLR_GREEN}${CLR_BOLD}$VLESS_LINK${CLR_RESET}"
 echo -e "${CLR_MAGENTA}│${CLR_RESET}"
 echo -e "${CLR_MAGENTA}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 echo ""
 
-if command -v qrencode >/dev/null 2>&1 && [[ -n "$VLESS_LINK" ]]; then
+if [[ $TUNNEL_VERIFIED == 1 ]] && command -v qrencode >/dev/null 2>&1 && [[ -n "$VLESS_LINK" ]]; then
 echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} 📱 QR-КОД ДЛЯ ПОДКЛЮЧЕНИЯ С ТЕЛЕФОНА ${CLR_CYAN}]───────────────────────────${CLR_RESET}"
 echo -e "${CLR_CYAN}│ ${CLR_WHITE}Отсканируйте камерой в приложении v2rayNG / Happ / Streisand / FoXray:${CLR_RESET}"
 echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
