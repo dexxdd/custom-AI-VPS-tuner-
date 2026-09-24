@@ -15,6 +15,9 @@ trap 'rc=$?; printf "\nОшибка на этапе %s, строка %s (код 
 die() { printf '%s\n' "$*" >&2; exit 1; }
 ask() { read -r -p "$2" "$1" </dev/tty || die 'Нужен интерактивный SSH-терминал.'; }
 [[ $EUID -eq 0 ]] || die 'Запустите: sudo bash install.sh [домен]'
+[[ -r /dev/tty ]] || die 'Нужен интерактивный SSH-терминал.'
+echo 'Мастер установки: 3x-ui + VLESS-XHTTP + HTTPS-сайт'
+echo 'Отвечайте на вопросы; Enter выбирает значение в квадратных скобках.'
 [[ -r /etc/os-release && -d /run/systemd/system ]] || die 'Нужна Linux-система с systemd.'
 . /etc/os-release
 case "$ID:$VERSION_ID" in
@@ -50,7 +53,8 @@ export DEBIAN_FRONTEND=noninteractive
 echo 'Установка зависимостей. При занятости APT ждём до 300 секунд; блокировки не удаляются.'
 apt-get -o DPkg::Lock::Timeout=300 update
 apt-get -o DPkg::Lock::Timeout=300 install -y ca-certificates curl nginx certbot python3 openssl qrencode tar
-DOMAIN=$(python3 - "$DOMAIN" <<'PY_DOMAIN'
+while true; do
+if NORMALIZED_DOMAIN=$(python3 - "$DOMAIN" <<'PY_DOMAIN'
 import re, sys
 domain = sys.argv[1].strip().rstrip('.').lower()
 try:
@@ -64,17 +68,24 @@ if any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', s) for s in lab
     raise SystemExit('Некорректное доменное имя')
 print(domain)
 PY_DOMAIN
-)
+); then
+  DOMAIN=$NORMALIZED_DOMAIN
+  echo "DNS для $DOMAIN:"
+  if getent ahosts "$DOMAIN"; then break; fi
+  echo 'Домен пока не разрешается. Исправьте DNS или укажите другой домен.'
+fi
+ask DOMAIN 'Введите домен заново (или исправленный прежний домен): '
+done
 echo "Домен: $DOMAIN. Все A/AAAA должны указывать на этот VPS; TCP 80/443/8443 должны быть доступны в панели хостинга."
 echo 'Для этой инструкции используйте DNS only. Неверную AAAA удалите или исправьте.'
-getent ahosts "$DOMAIN" || die 'Домен не разрешается. Исправьте DNS и запустите снова.'
 ADMIN_IP=${SSH_CONNECTION:-}
 ADMIN_IP=${ADMIN_IP%% *}
 ADMIN_IP=${ADMIN_IP:-${SSH_CLIENT:-}}
 ADMIN_IP=${ADMIN_IP%% *}
+while true; do
 ask WHITELIST "IP/CIDR для панели через запятую, all — всем [${ADMIN_IP:-обязательно указать}]: "
 WHITELIST=${WHITELIST:-$ADMIN_IP}
-ACL=$(python3 - "$WHITELIST" <<'PY_ACL'
+if ACL=$(python3 - "$WHITELIST" <<'PY_ACL'
 import ipaddress, sys
 s = sys.argv[1].strip()
 if s == 'all':
@@ -89,7 +100,9 @@ else:
     print('\n'.join('allow ' + n + ';' for n in nets))
     print('deny all;')
 PY_ACL
-)
+); then break; fi
+echo 'Проверьте адреса и повторите ввод.'
+done
 PRESETS=('Tokyo|Kissa Studio|Specialty coffee|Japanese minimalism' 'Berlin|Bauhaus Lab|Architecture|Sustainable design' 'Paris|Atelier Lumiere|Botanical fragrances|Handcrafted scents')
 IFS='|' read -r DEF_CITY DEF_BRAND DEF_NICHE DEF_VIBE <<< "${PRESETS[RANDOM % ${#PRESETS[@]}]}"
 ask CITY "Город [$DEF_CITY]: "; CITY=${CITY:-$DEF_CITY}
@@ -97,8 +110,20 @@ ask BRAND "Название [$DEF_BRAND]: "; BRAND=${BRAND:-$DEF_BRAND}
 ask NICHE "Сфера деятельности [$DEF_NICHE]: "; NICHE=${NICHE:-$DEF_NICHE}
 ask VIBE "Ключевые слова / стиль [$DEF_VIBE]: "; VIBE=${VIBE:-$DEF_VIBE}
 echo 'Для ИИ используется Pollinations. Параметры сайта отправляются сервису; действуют его тарифы и лимиты.'
-read -r -s -p 'API-ключ Pollinations (Enter — локальный шаблон): ' POLLINATIONS_API_KEY </dev/tty
-echo
+while true; do
+  echo 'Создание сайта: 1 — нейросеть, 2 — встроенный шаблон без ключа.'
+  ask SITE_MODE 'Ваш выбор [1]: '
+  SITE_MODE=${SITE_MODE:-1}
+  case "$SITE_MODE" in
+    1)
+      read -r -s -p 'API-ключ Pollinations (Enter — вернуться к выбору): ' POLLINATIONS_API_KEY </dev/tty
+      echo
+      [[ -n "$POLLINATIONS_API_KEY" ]] && break
+      ;;
+    2) POLLINATIONS_API_KEY=''; break ;;
+    *) echo 'Введите 1 или 2.' ;;
+  esac
+done
 export POLLINATIONS_API_KEY
 if [[ -n "$POLLINATIONS_API_KEY" ]]; then
   ask AI_MODEL 'ID текстовой модели из каталога Pollinations [openai]: '
@@ -410,8 +435,12 @@ if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then
   # Access is restricted independently by the Nginx ACL, including IPv6.
   ufw allow "$PUBLIC_PANEL_PORT/tcp"
 fi
-certbot certonly --webroot -w "$ACME" -d "$DOMAIN" --cert-name "$DOMAIN" \
-  --non-interactive --agree-tos --register-unsafely-without-email
+until certbot certonly --webroot -w "$ACME" -d "$DOMAIN" --cert-name "$DOMAIN" \
+  --non-interactive --agree-tos --register-unsafely-without-email; do
+  echo 'Сертификат не выпущен. Проверьте A/AAAA, доступность порта 80 и сообщение Certbot.'
+  ask RETRY_CERT 'После исправления: 1 — повторить, 2 — выйти [2]: '
+  [[ "$RETRY_CERT" == 1 ]] || die 'Установка остановлена на выпуске сертификата.'
+done
 CERT_FILE=/etc/letsencrypt/live/$DOMAIN/fullchain.pem
 KEY_FILE=/etc/letsencrypt/live/$DOMAIN/privkey.pem
 [[ -s "$CERT_FILE" && -s "$KEY_FILE" ]]
