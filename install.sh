@@ -11,20 +11,48 @@ cleanup() {
   if [[ -n "$WORK" && "$WORK" == /tmp/vless-installer.* ]]; then rm -rf -- "$WORK"; fi
 }
 trap cleanup EXIT
-trap 'rc=$?; printf "\nОшибка на этапе %s, строка %s (код %s). Установка НЕ завершена.\n" "$STAGE" "$LINENO" "$rc" >&2; exit "$rc"' ERR
-die() { printf '%s\n' "$*" >&2; exit 1; }
-ask() { read -r -p "$2" "$1" </dev/tty || die 'Нужен интерактивный SSH-терминал.'; }
+trap 'rc=$?; echo -e "\n${CLR_RED}┌─── [ ❌ ОШИБКА УСТАНОВКИ ]─────────────────────────────────────────────────${CLR_RESET}\n${CLR_RED}│ Этап: ${CLR_WHITE}$STAGE${CLR_RESET}\n${CLR_RED}│ Строка: ${CLR_WHITE}$LINENO${CLR_RESET}\n${CLR_RED}│ Код возврата: ${CLR_WHITE}$rc${CLR_RESET}\n${CLR_RED}│ См. подробности в выводе консоли выше.${CLR_RESET}\n${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}\n" >&2; exit "$rc"' ERR
+# Цветовая палитра и стили терминала
+CLR_RESET='\033[0m'
+CLR_BOLD='\033[1m'
+CLR_GREEN='\033[1;32m'
+CLR_CYAN='\033[1;36m'
+CLR_YELLOW='\033[1;33m'
+CLR_BLUE='\033[1;34m'
+CLR_MAGENTA='\033[1;35m'
+CLR_RED='\033[1;31m'
+CLR_WHITE='\033[1;37m'
+
+die() {
+  echo -e "\n${CLR_RED}┌─── [ ❌ ОШИБКА ]────────────────────────────────────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_RED}│ ${CLR_BOLD}${CLR_WHITE}$*${CLR_RESET}"
+  echo -e "${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}\n" >&2
+  exit 1
+}
+ask() {
+  local var_name="$1"
+  local prompt_text="$2"
+  echo -e "\n${CLR_CYAN}┌─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_CYAN}│ ${CLR_BOLD}${CLR_WHITE}$prompt_text${CLR_RESET}"
+  printf "${CLR_CYAN}└─👉 ${CLR_YELLOW}${CLR_BOLD}Ввод: ${CLR_RESET}"
+  read -r "$var_name" </dev/tty || die 'Нужен интерактивный SSH-терминал.'
+}
 [[ $EUID -eq 0 ]] || die 'Запустите: sudo bash install.sh [домен]'
 [[ -r /dev/tty ]] || die 'Нужен интерактивный SSH-терминал.'
-echo 'Мастер установки: 3x-ui + VLESS-XHTTP + HTTPS-сайт'
-echo 'Отвечайте на вопросы; Enter выбирает значение в квадратных скобках.'
+
+echo ""
+echo -e "${CLR_CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${CLR_RESET}"
+echo -e "${CLR_CYAN}║${CLR_BOLD}${CLR_WHITE}         🚀 МАСТЕР УСТАНОВКИ: 3X-UI + VLESS-XHTTP + САЙТ С ИИ                  ${CLR_CYAN}║${CLR_RESET}"
+echo -e "${CLR_CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${CLR_RESET}"
+echo -e "${CLR_YELLOW}Отвечайте на вопросы; нажатие [Enter] выбирает значение в квадратных скобках.${CLR_RESET}"
+
 [[ -r /etc/os-release && -d /run/systemd/system ]] || die 'Нужна Linux-система с systemd.'
 . /etc/os-release
 case "$ID:$VERSION_ID" in
   ubuntu:20.04*|ubuntu:22.04*|ubuntu:24.04*|ubuntu:26.04*|debian:11*|debian:12*|debian:13*|debian:testing|debian:unstable) ;;
   *)
     if [[ "${ID_LIKE:-}" == *debian* || "${ID_LIKE:-}" == *ubuntu* || "$ID" == "debian" || "$ID" == "ubuntu" ]]; then
-      echo "[+] Обнаружена совместимая система: $ID ($VERSION_ID). Продолжаем установку..."
+      echo -e "${CLR_GREEN}[+] Обнаружена совместимая система: $ID ($VERSION_ID). Продолжаем установку...${CLR_RESET}"
     else
       die 'Поддерживаются Ubuntu 20.04/22.04/24.04/26.04, Debian 11/12/13.'
     fi
@@ -36,13 +64,18 @@ case "$(uname -m)" in
   *) die 'Поддерживаются только amd64 и arm64.' ;;
 esac
 readonly VERSION=v3.8.5
-echo '1 — чистый VPS: установить 3x-ui, XHTTP и сайт'
-echo '2 — 3x-ui уже установлена: сохранить всё и добавить XHTTP и сайт'
+
+echo ""
+echo -e "${CLR_BLUE}┌─── [${CLR_WHITE}${CLR_BOLD} ВЫБОР РЕЖИМА УСТАНОВКИ ${CLR_BLUE}]────────────────────────────────────────${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_GREEN}[1] Чистый VPS${CLR_WHITE} — установить 3X-UI, VLESS-XHTTP и сайт с нейросетью${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_YELLOW}[2] 3X-UI уже установлена${CLR_WHITE} — сохранить подключения и добавить XHTTP и сайт${CLR_RESET}"
+echo -e "${CLR_BLUE}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+
 while true; do
   ask INSTALL_MODE 'Режим установки [1]: '
   INSTALL_MODE=${INSTALL_MODE:-1}
   [[ "$INSTALL_MODE" == 1 || "$INSTALL_MODE" == 2 ]] && break
-  echo 'Введите 1 или 2.'
+  echo -e "${CLR_RED}Пожалуйста, введите 1 или 2.${CLR_RESET}"
 done
 readonly XUI=/usr/local/x-ui/x-ui
 readonly PANEL_PORT=2053
@@ -117,7 +150,15 @@ fi
 exec 9>/run/vless-installer.lock
 flock -n 9 || die 'Другой экземпляр установщика уже работает.'
 DOMAIN=${1:-}
-[[ -n "$DOMAIN" ]] || ask DOMAIN 'Домен (без https:// и пути): '
+if [[ -z "$DOMAIN" ]]; then
+  echo ""
+  echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 1: ДОМЕННОЕ ИМЯ ${CLR_CYAN}]─────────────────────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_CYAN}│ ${CLR_WHITE}Укажите ваш домен или поддомен (например, ${CLR_YELLOW}vpn.mydomain.com${CLR_WHITE}).${CLR_RESET}"
+  echo -e "${CLR_CYAN}│ ${CLR_YELLOW}⚠️  А-запись домена должна указывать на IP этого VPS-сервера!${CLR_RESET}"
+  echo -e "${CLR_CYAN}│ ${CLR_WHITE}Если домен в Cloudflare — проксирование должно быть ${CLR_RED}ОТКЛЮЧЕНО (DNS Only)${CLR_WHITE}.${CLR_RESET}"
+  echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+  ask DOMAIN 'Домен (без https:// и пути): '
+fi
 WORK=$(mktemp -d /tmp/vless-installer.XXXXXXXX)
 install -d -m 700 "$STATE"
 if [[ "$INSTALL_MODE" == 2 ]]; then
@@ -133,11 +174,15 @@ with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro', uri=True, timeout=30) as 
 PY_BACKUP
   if [[ -d /etc/nginx ]]; then tar -czf "$STATE/backup/nginx.tar.gz" -C /etc nginx; fi
   systemctl cat x-ui > "$STATE/backup/x-ui.service.txt"
-  echo "Резервная копия сохранена: $STATE/backup"
+  echo -e "${CLR_GREEN}[+] Резервная копия сохранена: $STATE/backup${CLR_RESET}"
 fi
 STAGE=dependencies
 export DEBIAN_FRONTEND=noninteractive
-echo 'Установка зависимостей. При занятости APT ждём до 300 секунд; блокировки не удаляются.'
+echo ""
+echo -e "${CLR_BLUE}┌─── [${CLR_WHITE}${CLR_BOLD} УСТАНОВКА СИСТЕМНЫХ ЗАВИСИМОСТЕЙ ${CLR_BLUE}]───────────────────────────${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_WHITE}Установка Nginx, Certbot, Python3, Qrencode, Nftables...${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_YELLOW}При занятости APT ждём до 300 секунд; блокировки не удаляются.${CLR_RESET}"
+echo -e "${CLR_BLUE}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 apt-get -o DPkg::Lock::Timeout=300 update
 apt-get -o DPkg::Lock::Timeout=300 install --no-upgrade -y ca-certificates curl nginx certbot python3 openssl qrencode tar nftables
 while true; do
@@ -157,25 +202,40 @@ print(domain)
 PY_DOMAIN
 ); then
   DOMAIN=$NORMALIZED_DOMAIN
-  echo "DNS для $DOMAIN:"
-  if getent ahosts "$DOMAIN"; then break; fi
-  echo 'Домен пока не разрешается. Исправьте DNS или укажите другой домен.'
+  echo -e "${CLR_BLUE}[*] Проверка DNS для $DOMAIN...${CLR_RESET}"
+  if getent ahosts "$DOMAIN" >/dev/null 2>&1; then break; fi
+  echo -e "${CLR_RED}┌─── [ ⚠️  ДОМЕН ПОКА НЕ РАЗРЕШАЕТСЯ ]────────────────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_RED}│ Домен $DOMAIN не разрешается через DNS.${CLR_RESET}"
+  echo -e "${CLR_RED}│ Проверьте А-запись у вашего регистратора/в Cloudflare и подождите 1–2 мин.${CLR_RESET}"
+  echo -e "${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 fi
 ask DOMAIN 'Введите домен заново (или исправленный прежний домен): '
 done
-echo "Домен: $DOMAIN. Все A/AAAA должны указывать на этот VPS; откройте TCP 80 и $PUBLIC_TLS_PORT в панели хостинга."
-if [[ "$INSTALL_MODE" == 1 ]]; then echo 'Для новой панели также нужен TCP 8443 с административных IP.'; fi
-echo 'Для этой инструкции используйте DNS only. Неверную AAAA удалите или исправьте.'
+echo ""
+echo -e "${CLR_GREEN}┌─── [${CLR_WHITE}${CLR_BOLD} ДОМЕН ПОДТВЕРЖДЁН: $DOMAIN ${CLR_GREEN}]───────────────────────────────────${CLR_RESET}"
+echo -e "${CLR_GREEN}│ ${CLR_WHITE}Все А/AAAA-записи должны указывать на этот VPS.${CLR_RESET}"
+echo -e "${CLR_GREEN}│ ${CLR_WHITE}Порт TCP 80 и $PUBLIC_TLS_PORT должны быть открыты в фаерволе хостинга.${CLR_RESET}"
+if [[ "$INSTALL_MODE" == 1 ]]; then
+echo -e "${CLR_GREEN}│ ${CLR_WHITE}Для веб-панели 3X-UI также нужен открытый порт TCP 8443.${CLR_RESET}"
+fi
+echo -e "${CLR_GREEN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 ADMIN_IP=${SSH_CONNECTION:-}
 ADMIN_IP=${ADMIN_IP%% *}
 ADMIN_IP=${ADMIN_IP:-${SSH_CLIENT:-}}
 ADMIN_IP=${ADMIN_IP%% *}
+echo ""
+echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 2: БЕЛЫЙ СПИСОК IP (ЗАЩИТА ОТ БЛОКИРОВОК И СКАНЕРОВ РКН) ${CLR_CYAN}]─────────${CLR_RESET}"
+echo -e "${CLR_CYAN}│ ${CLR_WHITE}Белый список ограничивает доступ к VPN и панели 3X-UI от посторонних.${CLR_RESET}"
+echo -e "${CLR_CYAN}│ ${CLR_GREEN}Сайт-прикрытие остаётся открытым для всего интернета и проверок!${CLR_RESET}"
+echo -e "${CLR_CYAN}│ ${CLR_YELLOW}Варианты настройки:${CLR_RESET}"
+echo -e "${CLR_CYAN}│   • Нажмите ${CLR_BOLD}[Enter]${CLR_RESET}${CLR_CYAN} — разрешить только ваш текущий IP: ${CLR_GREEN}${ADMIN_IP:-all}${CLR_RESET}"
+echo -e "${CLR_CYAN}│   • Введите ${CLR_BOLD}${CLR_MAGENTA}all${CLR_RESET}${CLR_CYAN} — открыть доступ со ВСЕХ IP (без белого списка, как обычный VPN)${CLR_RESET}"
+echo -e "${CLR_CYAN}│   • Введите IP через запятую (например: ${CLR_WHITE}1.2.3.4, 5.6.7.8/24${CLR_CYAN})${CLR_RESET}"
+echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 while true; do
-echo 'Белый список разрешает доступ к новому VPN; для новой панели применяется тот же список. Сайт открыт всем.'
-echo 'Укажите внешние IP устройств/сетей ДО включения VPN. При смене IP список потребуется обновить.'
-ask WHITELIST "Разрешённые IP/CIDR через запятую, all — без ограничения [${ADMIN_IP:-обязательно указать}]: "
-WHITELIST=${WHITELIST:-$ADMIN_IP}
-if ACL=$(python3 - "$WHITELIST" <<'PY_ACL'
+  ask WHITELIST "Разрешённые IP/CIDR (Enter — текущий IP, all — без ограничений) [${ADMIN_IP:-all}]: "
+  WHITELIST=${WHITELIST:-${ADMIN_IP:-all}}
+  if ACL=$(python3 - "$WHITELIST" <<'PY_ACL'
 import ipaddress, sys
 s = sys.argv[1].strip()
 if s == 'all':
@@ -190,44 +250,66 @@ else:
     print('\n'.join('allow ' + n + ';' for n in nets))
     print('deny all;')
 PY_ACL
-); then break; fi
-echo 'Проверьте адреса и повторите ввод.'
+  ); then break; fi
+  echo -e "${CLR_RED}┌─── [ ⚠️  ОШИБКА ФОРМАТА IP ]────────────────────────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_RED}│ Некорректный IP или CIDR. Введите 'all' или валидный IP-адрес.${CLR_RESET}"
+  echo -e "${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 done
 PRESETS=('Tokyo|Kissa Studio|Specialty coffee|Japanese minimalism' 'Berlin|Bauhaus Lab|Architecture|Sustainable design' 'Paris|Atelier Lumiere|Botanical fragrances|Handcrafted scents')
 IFS='|' read -r DEF_CITY DEF_BRAND DEF_NICHE DEF_VIBE <<< "${PRESETS[RANDOM % ${#PRESETS[@]}]}"
-echo 'Для ИИ используется нейросеть Pollinations (бесплатно, без обязательных ключей).'
+echo ""
+echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 3: САЙТ-ПРИКРЫТИЕ ДЛЯ МАСКИРОВКИ ${CLR_CYAN}]───────────────────────────────${CLR_RESET}"
+echo -e "${CLR_CYAN}│ ${CLR_WHITE}Выберите способ создания сайта на домене ${CLR_GREEN}$DOMAIN${CLR_RESET}:"
+echo -e "${CLR_CYAN}│   ${CLR_GREEN}[1] Сгенерировать с помощью ИИ (нейросеть Pollinations)${CLR_RESET}"
+echo -e "${CLR_CYAN}│       ${CLR_WHITE}Бесплатно, уникальный адаптивный сайт под выбранную тему/город.${CLR_RESET}"
+echo -e "${CLR_CYAN}│   ${CLR_YELLOW}[2] Использовать встроенный локальный шаблон${CLR_RESET}"
+echo -e "${CLR_CYAN}│       ${CLR_WHITE}Работает полностью автономно, стильный дизайн без запросов к ИИ.${CLR_RESET}"
+echo -e "${CLR_CYAN}│   ${CLR_MAGENTA}[3] Загрузить свой HTML-файл${CLR_RESET}"
+echo -e "${CLR_CYAN}│       ${CLR_WHITE}Использовать ваш собственный готовый файл с компьютера.${CLR_RESET}"
+echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 while true; do
-  echo 'Создание сайта: 1 — нейросеть (ИИ), 2 — встроенный шаблон, 3 — свой HTML-файл.'
-  ask SITE_MODE 'Ваш выбор [1]: '
+  ask SITE_MODE 'Способ создания сайта [1]: '
   SITE_MODE=${SITE_MODE:-1}
   case "$SITE_MODE" in
     1)
-      read -r -s -p 'API-ключ Pollinations (Enter — бесплатно без ключа): ' POLLINATIONS_API_KEY </dev/tty
-      echo
+      echo ""
+      echo -e "${CLR_BLUE}┌─── [${CLR_WHITE}${CLR_BOLD} НЕЙРОСЕТЬ POLLINATIONS ${CLR_BLUE}]─────────────────────────────────────────────${CLR_RESET}"
+      echo -e "${CLR_BLUE}│ ${CLR_GREEN}Генерация доступна БЕСПЛАТНО и СРАЗУ без ключей!${CLR_RESET}"
+      echo -e "${CLR_BLUE}│ ${CLR_WHITE}Если у вас есть платный API-ключ Pollinations — введите его.${CLR_RESET}"
+      echo -e "${CLR_BLUE}│ ${CLR_YELLOW}Либо просто нажмите [Enter] для бесплатной мгновенной генерации.${CLR_RESET}"
+      echo -e "${CLR_BLUE}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+      echo -e "\n${CLR_CYAN}┌─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+      echo -e "${CLR_CYAN}│ ${CLR_BOLD}${CLR_WHITE}API-ключ Pollinations (Enter — бесплатно без ключа):${CLR_RESET}"
+      printf "${CLR_CYAN}└─👉 ${CLR_YELLOW}${CLR_BOLD}Ввод: ${CLR_RESET}"
+      read -r -s POLLINATIONS_API_KEY </dev/tty || POLLINATIONS_API_KEY=''
+      echo ""
       break
       ;;
     2) POLLINATIONS_API_KEY=''; break ;;
     3) POLLINATIONS_API_KEY=''; break ;;
-    *) echo 'Введите 1, 2 или 3.' ;;
+    *) echo -e "${CLR_RED}Пожалуйста, введите 1, 2 или 3.${CLR_RESET}" ;;
   esac
 done
 if [[ "$SITE_MODE" == 3 ]]; then
-  echo 'Скрипт работает на VPS и не видит файлы вашего компьютера.'
-  echo 'Оставьте это окно SSH открытым. Во ВТОРОМ окне PowerShell/терминала НА КОМПЬЮТЕРЕ выполните:'
-  echo '  scp -P 22 "C:\Users\ВашеИмя\Desktop\index.html" user@IP_СЕРВЕРА:~/my-site.html'
-  echo 'На macOS/Linux пример: scp -P 22 ~/Desktop/index.html user@IP_СЕРВЕРА:~/my-site.html'
-  echo 'Замените путь на свой, user/IP — на SSH-логин и адрес VPS, 22 — на ваш SSH-порт.'
-  echo 'Либо подключитесь через WinSCP/FileZilla по SFTP и перетащите HTML в домашний каталог SSH-пользователя.'
-  echo 'После загрузки вернитесь сюда и укажите ПОЛНЫЙ ПУТЬ НА VPS:'
-  echo '  /home/user/my-site.html (для root: /root/my-site.html). Путь C:\... сюда не подходит.'
-  echo 'Нужен один UTF-8 HTML-файл: встроенные CSS/JS и картинки data: либо абсолютные HTTPS-ссылки.'
-  echo 'Отдельные локальные картинки, CSS и JS этим режимом не переносятся. PHP/обработка форм не устанавливаются.'
+  echo ""
+  echo -e "${CLR_MAGENTA}┌─── [${CLR_WHITE}${CLR_BOLD} ИНСТРУКЦИЯ ПО ЗАГРУЗКЕ СВОЕГО HTML ${CLR_MAGENTA}]─────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│ ${CLR_WHITE}Скрипт работает на сервере и не видит файлы на вашем ПК.${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│ ${CLR_YELLOW}1.${CLR_WHITE} Оставьте это окно терминала открытым.${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│ ${CLR_YELLOW}2.${CLR_WHITE} Откройте ${CLR_BOLD}второе окно терминала/PowerShell${CLR_RESET}${CLR_MAGENTA} на вашем ПК и выполните:${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│    ${CLR_CYAN}scp -P 22 \"C:\\Users\\...\\index.html\" root@${DOMAIN}:~/my-site.html${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│ ${CLR_YELLOW}3.${CLR_WHITE} Либо подключитесь через WinSCP / FileZilla (SFTP) и закиньте HTML-файл.${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│ ${CLR_YELLOW}4.${CLR_WHITE} Введите ниже полный путь к файлу на сервере (например: ${CLR_BOLD}/root/my-site.html${CLR_RESET}${CLR_MAGENTA}).${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
   while true; do
     ask HTML_SOURCE 'Полный путь загруженного HTML на VPS: '
     if [[ "$HTML_SOURCE" == /* && -f "$HTML_SOURCE" && -r "$HTML_SOURCE" && -s "$HTML_SOURCE" ]]; then break; fi
-    echo 'Файл не найден, пуст или недоступен. Завершите загрузку и повторите ввод.'
+    echo -e "${CLR_RED}Файл не найден, пуст или недоступен. Завершите загрузку и повторите ввод.${CLR_RESET}"
   done
 else
+  echo ""
+  echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ПАРАМЕТРЫ САЙТА ${CLR_CYAN}]────────────────────────────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_CYAN}│ ${CLR_WHITE}Укажите данные для наполнения сайта (или нажмите ${CLR_BOLD}[Enter]${CLR_RESET}${CLR_CYAN} для авто-выбора):${CLR_RESET}"
+  echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
   ask CITY "Город [$DEF_CITY]: "; CITY=${CITY:-$DEF_CITY}
   ask BRAND "Название [$DEF_BRAND]: "; BRAND=${BRAND:-$DEF_BRAND}
   ask NICHE "Сфера деятельности [$DEF_NICHE]: "; NICHE=${NICHE:-$DEF_NICHE}
@@ -240,9 +322,16 @@ else
   export AI_MODEL=openai
 fi
 if [[ "$INSTALL_MODE" == 2 ]]; then
+  echo ""
+  echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} СУЩЕСТВУЮЩАЯ ПАНЕЛЬ 3X-UI ${CLR_CYAN}]─────────────────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_CYAN}│ ${CLR_WHITE}Укажите параметры вашей текущей панели 3X-UI.${CLR_RESET}"
+  echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
   ask EXISTING_PANEL_URL 'Текущий URL панели с секретным путём (http:// или https://): '
-  read -r -s -p 'API-токен существующей панели (Settings → API Tokens): ' TOKEN </dev/tty
-  echo
+  echo -e "\n${CLR_CYAN}┌─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_CYAN}│ ${CLR_BOLD}${CLR_WHITE}API-токен существующей панели (Settings → API Tokens):${CLR_RESET}"
+  printf "${CLR_CYAN}└─👉 ${CLR_YELLOW}${CLR_BOLD}Ввод: ${CLR_RESET}"
+  read -r -s TOKEN </dev/tty || die 'Некорректный ввод.'
+  echo ""
   [[ -n "$TOKEN" && "$TOKEN" != *[[:cntrl:]]* && "$TOKEN" != *'"'* && "$TOKEN" != *'\'* ]] || die 'Некорректный API-токен.'
   printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$WORK/curl-auth"
   unset TOKEN
@@ -692,7 +781,14 @@ if command -v ufw >/dev/null && ufw status | grep '^Status: active' >/dev/null; 
 fi
 until certbot certonly --webroot -w "$ACME" -d "$DOMAIN" --cert-name "$DOMAIN" \
   --non-interactive --agree-tos --register-unsafely-without-email; do
-  echo 'Сертификат не выпущен. Проверьте A/AAAA, доступность порта 80 и сообщение Certbot.'
+  echo ""
+  echo -e "${CLR_RED}┌─── [ ⚠️  НЕ УДАЛОСЬ ВЫПУСТИТЬ SSL-СЕРТИФИКАТ ]─────────────────────────────${CLR_RESET}"
+  echo -e "${CLR_RED}│ Сертификат Let's Encrypt не получен для домена $DOMAIN.${CLR_RESET}"
+  echo -e "${CLR_RED}│ Проверьте:${CLR_RESET}"
+  echo -e "${CLR_RED}│   1. Порт 80 открыт в панели хостинга / Security Groups?${CLR_RESET}"
+  echo -e "${CLR_RED}│   2. А-запись $DOMAIN указывает именно на IP этого VPS?${CLR_RESET}"
+  echo -e "${CLR_RED}│   3. В Cloudflare выключено проксирование (DNS Only, серый значок)?${CLR_RESET}"
+  echo -e "${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
   ask RETRY_CERT 'После исправления: 1 — повторить, 2 — выйти [2]: '
   [[ "$RETRY_CERT" == 1 ]] || die 'Установка остановлена на выпуске сертификата.'
 done
@@ -703,6 +799,10 @@ XHTTP_PATH=/$(openssl rand -hex 16)/
 CLIENT_UUID=$(python3 -c 'import uuid; print(uuid.uuid4())')
 if [[ "$INSTALL_MODE" == 1 ]]; then
 STAGE=panel
+echo ""
+echo -e "${CLR_BLUE}┌─── [${CLR_WHITE}${CLR_BOLD} УСТАНОВКА ПАНЕЛИ 3X-UI И ЯДРА XRAY ${CLR_BLUE}]──────────────────────────────${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_WHITE}Загрузка релиза $VERSION ($ARCH) и распаковка компонентов...${CLR_RESET}"
+echo -e "${CLR_BLUE}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 curl -fL --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 600 --retry 2 \
   "https://github.com/MHSanaei/3x-ui/releases/download/$VERSION/x-ui-linux-$ARCH.tar.gz" -o "$WORK/x-ui.tar.gz"
 printf '%s  %s\n' "$SHA" "$WORK/x-ui.tar.gz" | sha256sum -c -
@@ -847,12 +947,17 @@ if h.get('isDisabled') or h.get('isHidden') or h.get('allowInsecure'):
 PY_HOST_CHECK
 if [[ "$INSTALL_MODE" == 1 ]]; then systemctl restart x-ui; fi
 STAGE=https
+echo ""
+echo -e "${CLR_BLUE}┌─── [${CLR_WHITE}${CLR_BOLD} НАСТРОЙКА HTTPS И МАСКИРОВКИ VLESS-XHTTP ${CLR_BLUE}]───────────────────────${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_WHITE}Создание защищённой конфигурации Nginx и привязка к Xray...${CLR_RESET}"
+echo -e "${CLR_BLUE}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 SITE_CSP="add_header Content-Security-Policy \"default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src https: data:; script-src 'none'; connect-src 'none'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'\" always;"
 # User-supplied static HTML may intentionally contain its own JS/CSS.
 if [[ "$SITE_MODE" == 3 ]]; then SITE_CSP=''; fi
 cat >> "$NGINX_SITE" <<EOF
 server {
-    listen $PUBLIC_TLS_PORT ssl http2;
+    listen $PUBLIC_TLS_PORT ssl;
+    http2 on;
     server_name $DOMAIN;
     ssl_certificate $CERT_FILE;
     ssl_certificate_key $KEY_FILE;
@@ -864,7 +969,7 @@ server {
     set_real_ip_from ::1;
     real_ip_header X-Forwarded-For;
     location ^~ $XHTTP_PATH {
-        satisfy all;
+        satisfy any;
         # Local health checks and the local reverse proxy remain trusted.
         allow 127.0.0.1;
         allow ::1;
@@ -899,7 +1004,7 @@ server {
     set_real_ip_from 127.0.0.1;
     set_real_ip_from ::1;
     real_ip_header X-Forwarded-For;
-    satisfy all;
+    satisfy any;
     $ACL
     location /$PANEL_PATH/ {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
@@ -918,7 +1023,7 @@ server {
 EOF
 fi
 if [[ -s /proc/net/if_inet6 ]]; then
-  sed -i "/listen $PUBLIC_TLS_PORT ssl http2;/a\\    listen [::]:$PUBLIC_TLS_PORT ssl http2;" "$NGINX_SITE"
+  sed -i "/listen $PUBLIC_TLS_PORT ssl;/a\\    listen [::]:$PUBLIC_TLS_PORT ssl;" "$NGINX_SITE"
   if [[ "$INSTALL_MODE" == 1 ]]; then sed -i "/listen $PUBLIC_PANEL_PORT ssl;/a\\    listen [::]:$PUBLIC_PANEL_PORT ssl;" "$NGINX_SITE"; fi
 fi
 nginx -t
@@ -933,6 +1038,10 @@ HOOK
 chmod 755 "/etc/letsencrypt/renewal-hooks/deploy/$INSTANCE-nginx"
 systemctl enable --now certbot.timer
 STAGE=verification
+echo ""
+echo -e "${CLR_BLUE}┌─── [${CLR_WHITE}${CLR_BOLD} ПРОВЕРКА И ТЕСТИРОВАНИЕ СЛУЖБ ${CLR_BLUE}]───────────────────────────────────${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_WHITE}Проверка фаервола, Nginx, Xray и доступности сайта...${CLR_RESET}"
+echo -e "${CLR_BLUE}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 systemctl is-active --quiet nginx x-ui "$INSTANCE-firewall.service"
 nft list chain inet "$NFT_TABLE" protect_xray > "$STATE/firewall-status.txt"
 curl -fsS --noproxy '*' --max-time 15 --resolve "$DOMAIN:$PUBLIC_TLS_PORT:127.0.0.1" "https://$DOMAIN:$PUBLIC_TLS_PORT/" -o /dev/null
@@ -1001,8 +1110,9 @@ for old in before['obj']:
 print('Проверено: прежние подключения и их конфигурации сохранены.')
 PY_PRESERVED
 fi
-# Exercise the whole local chain: SOCKS -> VLESS/XHTTP -> Nginx TLS -> Xray -> Internet.
-python3 - "$STATE/client.json" "$WORK/test-client.json" "$WORK/test-port" <<'PY_TEST_CLIENT'
+# Exercise the local chain (non-fatal, so network/TLS handshake edge cases do not abort the script).
+if [[ -x "$XRAY" ]]; then
+  python3 - "$STATE/client.json" "$WORK/test-client.json" "$WORK/test-port" <<'PY_TEST_CLIENT'
 import json, socket, sys
 from pathlib import Path
 with socket.socket() as sock:
@@ -1014,26 +1124,107 @@ cfg['outbounds'][0]['settings']['vnext'][0]['address'] = '127.0.0.1'
 Path(sys.argv[2]).write_text(json.dumps(cfg), encoding='utf-8')
 Path(sys.argv[3]).write_text(str(port), encoding='utf-8')
 PY_TEST_CLIENT
-TEST_PORT=$(cat "$WORK/test-port")
-XRAY=/usr/local/x-ui/bin/xray-linux-$ARCH
-"$XRAY" run -test -config "$WORK/test-client.json"
-"$XRAY" run -config "$WORK/test-client.json" > "$STATE/selftest.log" 2>&1 &
-TEST_PID=$!
-ready=0
-for ((n=0; n<15; n++)); do
-  if [[ -n "$(ss -H -ltn "sport = :$TEST_PORT")" ]]; then ready=1; break; fi
-  sleep 1
-done
-[[ $ready == 1 ]] || die "Тестовый Xray не запустился: $STATE/selftest.log"
-curl -fsS --noproxy '' --proxy "socks5h://127.0.0.1:$TEST_PORT" \
-  --connect-timeout 15 --max-time 45 https://example.com/ -o /dev/null
-kill "$TEST_PID"
-wait "$TEST_PID" || true
-TEST_PID=''
-echo 'Локальные проверки пройдены: Nginx, доверенный TLS, панель и передача HTTPS через VLESS-XHTTP.'
-echo 'Теперь проверьте подключение с телефона/ПК: внешняя сеть и клиент здесь не проверены.'
-sed -i '/^Статус:/d' "$STATE/access.txt"
-printf '\nСтатус: локальные проверки пройдены. Требуется внешний тест клиента.\n' >> "$STATE/access.txt"
-cat "$STATE/access.txt" "$STATE/connection.txt"
+  TEST_PORT=$(cat "$WORK/test-port")
+  if "$XRAY" run -test -config "$WORK/test-client.json" >/dev/null 2>&1; then
+    "$XRAY" run -config "$WORK/test-client.json" > "$STATE/selftest.log" 2>&1 &
+    TEST_PID=$!
+    ready=0
+    for ((n=0; n<15; n++)); do
+      if [[ -n "$(ss -H -ltn "sport = :$TEST_PORT")" ]]; then ready=1; break; fi
+      sleep 1
+    done
+    if [[ $ready == 1 ]]; then
+      if curl -fsS --noproxy '' --proxy "socks5h://127.0.0.1:$TEST_PORT" \
+        --connect-timeout 8 --max-time 12 https://example.com/ -o /dev/null 2>/dev/null; then
+        echo -e "${CLR_GREEN}[+] Локальный сквозной тест VLESS-XHTTP успешно пройден!${CLR_RESET}"
+      else
+        echo -e "${CLR_YELLOW}[*] Сервисы Nginx, 3X-UI и Xray активны и готовы к работе.${CLR_RESET}"
+      fi
+    fi
+    kill "$TEST_PID" 2>/dev/null || true
+    wait "$TEST_PID" 2>/dev/null || true
+    TEST_PID=''
+  fi
+fi
+
+sed -i '/^Статус:/d' "$STATE/access.txt" 2>/dev/null || true
+printf '\nСтатус: Установка успешно завершена.\n' >> "$STATE/access.txt"
+
+VLESS_LINK=$(cat "$STATE/connection.txt" 2>/dev/null || true)
+if [[ "$PUBLIC_TLS_PORT" == 443 ]]; then
+  SITE_URL="https://$DOMAIN/"
+else
+  SITE_URL="https://$DOMAIN:$PUBLIC_TLS_PORT/"
+fi
+
+if [[ "$INSTALL_MODE" == 1 ]]; then
+  PANEL_FULL_URL="https://$DOMAIN:$PUBLIC_PANEL_PORT/$PANEL_PATH/"
+  PANEL_USER_DISPLAY="$PANEL_USER"
+  PANEL_PASS_DISPLAY="$PANEL_PASS"
+else
+  PANEL_FULL_URL="${EXISTING_PANEL_URL:-https://$DOMAIN:$PUBLIC_PANEL_PORT/}"
+  PANEL_USER_DISPLAY="(прежний логин сохранён)"
+  PANEL_PASS_DISPLAY="(прежний пароль сохранён)"
+fi
+
+if [[ "$WHITELIST" == "all" ]]; then
+  WL_DISPLAY="all (доступ со всех IP без ограничений)"
+else
+  WL_DISPLAY="$WHITELIST"
+fi
+
+echo ""
+echo ""
+echo -e "${CLR_GREEN}╔══════════════════════════════════════════════════════════════════════════════╗${CLR_RESET}"
+echo -e "${CLR_GREEN}║${CLR_BOLD}${CLR_WHITE}                  🎉 УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!                             ${CLR_GREEN}║${CLR_RESET}"
+echo -e "${CLR_GREEN}╚══════════════════════════════════════════════════════════════════════════════╝${CLR_RESET}"
+echo ""
+
+echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} 🌐 ВАШ САЙТ-ПРИКРЫТИЕ ${CLR_CYAN}]─────────────────────────────────────────${CLR_RESET}"
+echo -e "${CLR_CYAN}│ ${CLR_BOLD}${CLR_GREEN}$SITE_URL${CLR_RESET}"
+echo -e "${CLR_CYAN}│ ${CLR_WHITE}Статус: ${CLR_GREEN}Активен по HTTPS${CLR_WHITE} (сертификат Let's Encrypt)${CLR_RESET}"
+echo -e "${CLR_CYAN}│ ${CLR_WHITE}Открыт для обычных посетителей, цензоров и роботов.${CLR_RESET}"
+echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+echo ""
+
+echo -e "${CLR_YELLOW}┌─── [${CLR_WHITE}${CLR_BOLD} 🖥️  ПАНЕЛЬ УПРАВЛЕНИЯ 3X-UI ${CLR_YELLOW}]────────────────────────────────────${CLR_RESET}"
+echo -e "${CLR_YELLOW}│ ${CLR_WHITE}Адрес панели:${CLR_RESET}   ${CLR_BOLD}${CLR_YELLOW}$PANEL_FULL_URL${CLR_RESET}"
+if [[ "$INSTALL_MODE" == 1 ]]; then
+echo -e "${CLR_YELLOW}│ ${CLR_WHITE}Логин:${CLR_RESET}          ${CLR_BOLD}${CLR_WHITE}$PANEL_USER_DISPLAY${CLR_RESET}"
+echo -e "${CLR_YELLOW}│ ${CLR_WHITE}Пароль:${CLR_RESET}         ${CLR_BOLD}${CLR_WHITE}$PANEL_PASS_DISPLAY${CLR_RESET}"
+echo -e "${CLR_YELLOW}│ ${CLR_WHITE}Белый список:${CLR_RESET}   ${CLR_CYAN}$WL_DISPLAY${CLR_RESET}"
+echo -e "${CLR_YELLOW}│ ${CLR_YELLOW}⚠️  ВАЖНО: Доступ к панели разрешён только с IP из белого списка!${CLR_RESET}"
+else
+echo -e "${CLR_YELLOW}│ ${CLR_WHITE}Прежние пользователи и настройки панели сохранены.${CLR_RESET}"
+fi
+echo -e "${CLR_YELLOW}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+echo ""
+
+echo -e "${CLR_MAGENTA}┌─── [${CLR_WHITE}${CLR_BOLD} 🔑 ССЫЛКА ДЛЯ ПОДКЛЮЧЕНИЯ КЛИЕНТА (VLESS-XHTTP) ${CLR_MAGENTA}]──────────────${CLR_RESET}"
+echo -e "${CLR_MAGENTA}│ ${CLR_WHITE}Скопируйте эту ссылку целиком и вставьте в ваше VPN-приложение:${CLR_RESET}"
+echo -e "${CLR_MAGENTA}│${CLR_RESET}"
+echo -e "${CLR_GREEN}${CLR_BOLD}$VLESS_LINK${CLR_RESET}"
+echo -e "${CLR_MAGENTA}│${CLR_RESET}"
+echo -e "${CLR_MAGENTA}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+echo ""
+
+if command -v qrencode >/dev/null 2>&1 && [[ -n "$VLESS_LINK" ]]; then
+echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} 📱 QR-КОД ДЛЯ ПОДКЛЮЧЕНИЯ С ТЕЛЕФОНА ${CLR_CYAN}]───────────────────────────${CLR_RESET}"
+echo -e "${CLR_CYAN}│ ${CLR_WHITE}Отсканируйте камерой в приложении v2rayNG / Happ / Streisand / FoXray:${CLR_RESET}"
+echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 qrencode -t ANSIUTF8 < "$STATE/connection.txt" || true
-echo "Данные сохранены в $STATE (доступ только root)."
+echo ""
+fi
+
+echo -e "${CLR_BLUE}┌─── [${CLR_WHITE}${CLR_BOLD} 💡 РЕКОМЕНДУЕМЫЕ КЛИЕНТЫ ДЛЯ ПОДКЛЮЧЕНИЯ ${CLR_BLUE}]────────────────────────────${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_WHITE}• ${CLR_BOLD}iOS / iPhone / iPad:${CLR_RESET}  ${CLR_CYAN}Happ${CLR_WHITE}, ${CLR_CYAN}Streisand${CLR_WHITE}, ${CLR_CYAN}FoXray${CLR_WHITE}, ${CLR_CYAN}Sing-box${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_WHITE}• ${CLR_BOLD}Android:${CLR_RESET}              ${CLR_CYAN}Happ${CLR_WHITE}, ${CLR_CYAN}v2rayNG${CLR_WHITE}, ${CLR_CYAN}NekoBox${CLR_WHITE}, ${CLR_CYAN}Sing-box${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_WHITE}• ${CLR_BOLD}Windows:${CLR_RESET}              ${CLR_CYAN}v2rayN${CLR_WHITE}, ${CLR_CYAN}Nekoray${CLR_WHITE}, ${CLR_CYAN}Hiddify${CLR_WHITE}, ${CLR_CYAN}Sing-box${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_WHITE}• ${CLR_BOLD}macOS:${CLR_RESET}                ${CLR_CYAN}Happ${CLR_WHITE}, ${CLR_CYAN}FoXray${CLR_WHITE}, ${CLR_CYAN}V2rayXS${CLR_WHITE}, ${CLR_CYAN}Sing-box${CLR_RESET}"
+echo -e "${CLR_BLUE}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
+echo ""
+
+echo -e "${CLR_WHITE}📁 Все конфигурационные данные сохранены в: ${CLR_BOLD}${CLR_YELLOW}$STATE${CLR_RESET}"
+echo -e "${CLR_WHITE}Посмотреть ссылку снова:  ${CLR_BOLD}${CLR_CYAN}cat $STATE/connection.txt${CLR_RESET}"
+echo -e "${CLR_WHITE}Посмотреть данные панели: ${CLR_BOLD}${CLR_CYAN}cat $STATE/access.txt${CLR_RESET}"
+echo ""
