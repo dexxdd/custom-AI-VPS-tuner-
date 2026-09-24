@@ -203,6 +203,50 @@ sudo systemctl status certbot.timer
 
 После ошибки уже установленные пакеты и созданные настройки могут остаться. Посмотрите указанную стадию, `sudo journalctl -u x-ui -u nginx -n 100 --no-pager` и `sudo nginx -t`. Для повторной полной установки на тестовом сервере используйте исходный чистый снимок VPS; на рабочем — исправляйте конкретный этап, сохранив данные. Не удаляйте базу панели ради повторного запуска.
 
+## Удаление
+
+sudo bash -c '
+echo "[-] 1. Остановка и удаление служб..."
+systemctl stop x-ui "*vless-installer*" nginx certbot.timer 2>/dev/null || true
+systemctl disable x-ui "*vless-installer*" nginx 2>/dev/null || true
+rm -f /etc/systemd/system/x-ui.service /etc/systemd/system/*vless-installer*
+
+echo "[-] 2. Удаление пакетов Nginx и Certbot..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get -o DPkg::Lock::Timeout=300 purge -y nginx nginx-common nginx-core certbot 2>/dev/null || true
+apt-get -o DPkg::Lock::Timeout=300 autoremove -y || true
+
+echo "[-] 3. Сброс правил фаервола (nftables)..."
+if command -v nft >/dev/null 2>&1; then
+    nft list tables 2>/dev/null | awk "/vless/ {print \$2, \$3}" | while read -r fam tbl; do
+        [ -n "$tbl" ] && nft delete table "$fam" "$tbl" 2>/dev/null || true
+    done
+fi
+
+echo "[-] 4. Удаление директорий 3X-UI, Xray, сайта и ключей..."
+rm -rf /usr/local/x-ui /etc/x-ui /var/log/x-ui
+rm -rf /etc/vless-installer*
+rm -rf /var/www/vless-installer*
+rm -rf /etc/nginx
+rm -rf /etc/letsencrypt
+rm -f /run/vless-installer.lock
+
+echo "[-] 5. Перезагрузка systemd..."
+systemctl daemon-reload
+systemctl reset-failed
+
+echo ""
+echo "=========================================================="
+echo "          СЕРВЕР ПОЛНОСТЬЮ ОЧИЩЕН!"
+echo "=========================================================="
+if ss -tulpn | grep -E ":(80|443|8443|2053|10000)\b"; then
+    echo "⚠️ Какие-то службы ещё висят (см. выше)."
+else
+    echo "✅ Все порты (80, 443, 8443, 2053, 10000) свободны."
+    echo "Сервер чист как с завода, можно ставить с нуля!"
+fi
+'
+
 ## Источники совместимости
 
 - [3x-ui v3.8.5 и SHA-256 архивов](https://github.com/MHSanaei/3x-ui/releases/tag/v3.8.5)
