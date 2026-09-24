@@ -3,6 +3,9 @@
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
 STAGE=preflight
 WORK=''
 TEST_PID=''
@@ -518,17 +521,25 @@ PY_UPLOAD
   ask HTML_SOURCE 'Полный путь HTML на VPS: '
   done
 else
-python3 - "$THEME_CHOICE" "$CITY" "$BRAND" "$NICHE" "$VIBE" "$DOMAIN" "$WEBROOT/index.html" <<'PY_SITE'
+PYTHONUTF8=1 PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8 python3 - "$THEME_CHOICE" "$CITY" "$BRAND" "$NICHE" "$VIBE" "$DOMAIN" "$WEBROOT/index.html" <<'PY_SITE'
 import sys, html
 from datetime import datetime
 from pathlib import Path
 
-theme_idx = sys.argv[1].strip() if len(sys.argv) > 1 else "1"
-city = sys.argv[2].strip() if len(sys.argv) > 2 else "Москва"
-brand = sys.argv[3].strip() if len(sys.argv) > 3 else "Apex Cloud"
-niche = sys.argv[4].strip() if len(sys.argv) > 4 else "IT & Cloud Solutions"
-vibe = sys.argv[5].strip() if len(sys.argv) > 5 else "Отказоустойчивые цифровые решения и защита данных"
-domain = sys.argv[6].strip() if len(sys.argv) > 6 else "example.com"
+def clean_str(s):
+    if not isinstance(s, str):
+        return ""
+    try:
+        return s.encode('utf-8', 'surrogateescape').decode('utf-8', 'replace')
+    except Exception:
+        return s
+
+theme_idx = clean_str(sys.argv[1].strip()) if len(sys.argv) > 1 else "1"
+city = clean_str(sys.argv[2].strip()) if len(sys.argv) > 2 else "Москва"
+brand = clean_str(sys.argv[3].strip()) if len(sys.argv) > 3 else "Apex Cloud"
+niche = clean_str(sys.argv[4].strip()) if len(sys.argv) > 4 else "IT & Cloud Solutions"
+vibe = clean_str(sys.argv[5].strip()) if len(sys.argv) > 5 else "Отказоустойчивые цифровые решения и защита данных"
+domain = clean_str(sys.argv[6].strip()) if len(sys.argv) > 6 else "example.com"
 dest_path = Path(sys.argv[7].strip() if len(sys.argv) > 7 else "/var/www/site/index.html")
 
 is_cyrillic = any('\u0400' <= char <= '\u04FF' for char in f"{city} {brand} {niche} {vibe}")
@@ -1287,9 +1298,10 @@ html_code = f"""<!DOCTYPE html>
 </html>"""
 
 temporary = dest_path.with_suffix('.html.tmp')
-temporary.write_text(html_code, encoding='utf-8')
+raw_bytes = html_code.encode('utf-8', 'surrogateescape')
+temporary.write_bytes(raw_bytes)
 temporary.replace(dest_path)
-print(f"[+] Премиальный адаптивный сайт успешно создан: {len(html_code.encode('utf-8'))} байт (тема: {t['name']})")
+print(f"[+] Премиальный адаптивный сайт успешно создан: {len(raw_bytes)} байт (тема: {t['name']})")
 PY_SITE
 fi
 chmod 644 "$WEBROOT/index.html"
