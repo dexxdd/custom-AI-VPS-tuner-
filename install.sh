@@ -13,8 +13,6 @@ cleanup() {
   if [[ -n "$TEST_PID" ]]; then kill "$TEST_PID" 2>/dev/null || true; fi
   if [[ -n "$WORK" && "$WORK" == /tmp/vless-installer.* ]]; then rm -rf -- "$WORK"; fi
 }
-trap cleanup EXIT
-trap 'rc=$?; echo -e "\n${CLR_RED}┌─── [ ❌ ОШИБКА УСТАНОВКИ ]─────────────────────────────────────────────────${CLR_RESET}\n${CLR_RED}│ Этап: ${CLR_WHITE}$STAGE${CLR_RESET}\n${CLR_RED}│ Строка: ${CLR_WHITE}$LINENO${CLR_RESET}\n${CLR_RED}│ Код возврата: ${CLR_WHITE}$rc${CLR_RESET}\n${CLR_RED}│ См. подробности в выводе консоли выше.${CLR_RESET}\n${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}\n" >&2; exit "$rc"' ERR
 # Цветовая палитра и стили терминала
 CLR_RESET='\033[0m'
 CLR_BOLD='\033[1m'
@@ -25,6 +23,8 @@ CLR_BLUE='\033[1;34m'
 CLR_MAGENTA='\033[1;35m'
 CLR_RED='\033[1;31m'
 CLR_WHITE='\033[1;37m'
+trap cleanup EXIT
+trap 'rc=$?; echo -e "\n${CLR_RED}┌─── [ ❌ ОШИБКА УСТАНОВКИ ]─────────────────────────────────────────────────${CLR_RESET}\n${CLR_RED}│ Этап: ${CLR_WHITE}$STAGE${CLR_RESET}\n${CLR_RED}│ Строка: ${CLR_WHITE}$LINENO${CLR_RESET}\n${CLR_RED}│ Код возврата: ${CLR_WHITE}$rc${CLR_RESET}\n${CLR_RED}│ См. подробности в выводе консоли выше.${CLR_RESET}\n${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}\n" >&2; exit "$rc"' ERR
 
 die() {
   echo -e "\n${CLR_RED}┌─── [ ❌ ОШИБКА ]────────────────────────────────────────────────────────────${CLR_RESET}"
@@ -45,21 +45,15 @@ ask() {
 
 echo ""
 echo -e "${CLR_CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${CLR_RESET}"
-echo -e "${CLR_CYAN}║${CLR_BOLD}${CLR_WHITE}         🚀 МАСТЕР УСТАНОВКИ: 3X-UI + VLESS-XHTTP + САЙТ С ИИ                  ${CLR_CYAN}║${CLR_RESET}"
+echo -e "${CLR_CYAN}║${CLR_BOLD}${CLR_WHITE}     🚀 МАСТЕР УСТАНОВКИ: 3X-UI + VLESS-XHTTP + САЙТ-ШАБЛОН                   ${CLR_CYAN}║${CLR_RESET}"
 echo -e "${CLR_CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${CLR_RESET}"
 echo -e "${CLR_YELLOW}Отвечайте на вопросы; нажатие [Enter] выбирает значение в квадратных скобках.${CLR_RESET}"
 
 [[ -r /etc/os-release && -d /run/systemd/system ]] || die 'Нужна Linux-система с systemd.'
 . /etc/os-release
 case "$ID:$VERSION_ID" in
-  ubuntu:20.04*|ubuntu:22.04*|ubuntu:24.04*|ubuntu:26.04*|debian:11*|debian:12*|debian:13*|debian:testing|debian:unstable) ;;
-  *)
-    if [[ "${ID_LIKE:-}" == *debian* || "${ID_LIKE:-}" == *ubuntu* || "$ID" == "debian" || "$ID" == "ubuntu" ]]; then
-      echo -e "${CLR_GREEN}[+] Обнаружена совместимая система: $ID ($VERSION_ID). Продолжаем установку...${CLR_RESET}"
-    else
-      die 'Поддерживаются Ubuntu 20.04/22.04/24.04/26.04, Debian 11/12/13.'
-    fi
-    ;;
+  ubuntu:22.04|ubuntu:24.04|ubuntu:26.04|debian:12|debian:13) ;;
+  *) die 'Поддерживаются Ubuntu 22.04/24.04/26.04 и Debian 12/13.' ;;
 esac
 case "$(uname -m)" in
   x86_64) ARCH=amd64; SHA=6a85c110a04a727613c933c54ae602b8d37dab8876c6e20a6d46623010dd9d3c ;;
@@ -70,7 +64,7 @@ readonly VERSION=v3.8.5
 
 echo ""
 echo -e "${CLR_BLUE}┌─── [${CLR_WHITE}${CLR_BOLD} ВЫБОР РЕЖИМА УСТАНОВКИ ${CLR_BLUE}]────────────────────────────────────────${CLR_RESET}"
-echo -e "${CLR_BLUE}│ ${CLR_GREEN}[1] Чистый VPS${CLR_WHITE} — установить 3X-UI, VLESS-XHTTP и сайт с нейросетью${CLR_RESET}"
+echo -e "${CLR_BLUE}│ ${CLR_GREEN}[1] Чистый VPS${CLR_WHITE} — установить 3X-UI, VLESS-XHTTP и сайт-шаблон${CLR_RESET}"
 echo -e "${CLR_BLUE}│ ${CLR_YELLOW}[2] 3X-UI уже установлена${CLR_WHITE} — сохранить подключения и добавить XHTTP и сайт${CLR_RESET}"
 echo -e "${CLR_BLUE}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 
@@ -125,19 +119,25 @@ readonly NGINX_SITE=/etc/nginx/sites-available/$INSTANCE
 targets=("$STATE" "$WEBROOT" "$ACME" "$NGINX_SITE" "/etc/nginx/sites-enabled/$INSTANCE")
 if [[ "$INSTALL_MODE" == 1 ]]; then
   has_existing=0
+  existing_targets=()
   for target in "${targets[@]}" /etc/x-ui /usr/local/x-ui; do
-    if [[ -e "$target" || -L "$target" ]]; then has_existing=1; break; fi
+    if [[ -e "$target" || -L "$target" ]]; then
+      has_existing=1
+      existing_targets+=("$target")
+    fi
   done
   if [[ "$has_existing" == 1 ]]; then
     echo ""
     echo -e "${CLR_YELLOW}┌─── [ ⚠️  ОБНАРУЖЕНА ПРЕДЫДУЩАЯ УСТАНОВКА ]───────────────────────────────────${CLR_RESET}"
     echo -e "${CLR_YELLOW}│ На сервере найдены файлы или службы от прошлого запуска.${CLR_RESET}"
     echo -e "${CLR_YELLOW}│ Вы выбрали режим [1] Чистый VPS.${CLR_RESET}"
-    echo -e "${CLR_YELLOW}│ Переустановить заново с автоматической очисткой старых служб и портов?${CLR_RESET}"
+    echo -e "${CLR_YELLOW}│ Будут безвозвратно удалены найденные данные 3X-UI и этого установщика:${CLR_RESET}"
+    for target in "${existing_targets[@]}"; do
+      echo -e "${CLR_YELLOW}│   • $target${CLR_RESET}"
+    done
     echo -e "${CLR_YELLOW}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
-    ask REINSTALL_CONFIRM 'Очистить и переустановить заново? (1 — Да, 2 — Отмена) [1]: '
-    REINSTALL_CONFIRM=${REINSTALL_CONFIRM:-1}
-    if [[ "$REINSTALL_CONFIRM" == 1 ]]; then
+    ask REINSTALL_CONFIRM 'Для удаления введите слово DELETE (Enter — отмена): '
+    if [[ "$REINSTALL_CONFIRM" == 'DELETE' ]]; then
       echo -e "${CLR_BLUE}[*] Остановка служб и освобождение портов...${CLR_RESET}"
       systemctl stop x-ui 2>/dev/null || true
       systemctl stop "*$INSTANCE*" 2>/dev/null || true
@@ -165,11 +165,7 @@ require_free_port() {
 }
 ports=("$PUBLIC_TLS_PORT" "$XRAY_PORT")
 if [[ "$INSTALL_MODE" == 1 ]]; then
-  systemctl stop apache2 2>/dev/null || true
-  systemctl disable apache2 2>/dev/null || true
-  systemctl stop nginx 2>/dev/null || true
-  systemctl stop x-ui 2>/dev/null || true
-  ports+=(80 2096 "$PANEL_PORT" "$PUBLIC_PANEL_PORT")
+  ports+=(80 "$PANEL_PORT" "$PUBLIC_PANEL_PORT")
 fi
 for port in "${ports[@]}"; do
   require_free_port "$port"
@@ -257,17 +253,17 @@ ADMIN_IP=${ADMIN_IP%% *}
 ADMIN_IP=${ADMIN_IP:-${SSH_CLIENT:-}}
 ADMIN_IP=${ADMIN_IP%% *}
 echo ""
-echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 2: БЕЛЫЙ СПИСОК IP (ЗАЩИТА ОТ БЛОКИРОВОК И СКАНЕРОВ РКН) ${CLR_CYAN}]─────────${CLR_RESET}"
+echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 2: БЕЛЫЙ СПИСОК IP ДЛЯ ОГРАНИЧЕНИЯ ДОСТУПА ${CLR_CYAN}]───────────────────────${CLR_RESET}"
 echo -e "${CLR_CYAN}│ ${CLR_WHITE}Белый список ограничивает доступ к VPN и панели 3X-UI от посторонних.${CLR_RESET}"
 echo -e "${CLR_CYAN}│ ${CLR_GREEN}Сайт-прикрытие остаётся открытым для всего интернета и проверок!${CLR_RESET}"
 echo -e "${CLR_CYAN}│ ${CLR_YELLOW}Варианты настройки:${CLR_RESET}"
-echo -e "${CLR_CYAN}│   • Нажмите ${CLR_BOLD}[Enter]${CLR_RESET}${CLR_CYAN} — разрешить только ваш текущий IP: ${CLR_GREEN}${ADMIN_IP:-all}${CLR_RESET}"
+echo -e "${CLR_CYAN}│   • Нажмите ${CLR_BOLD}[Enter]${CLR_RESET}${CLR_CYAN} — разрешить только ваш текущий IP: ${CLR_GREEN}${ADMIN_IP:-не определён}${CLR_RESET}"
 echo -e "${CLR_CYAN}│   • Введите ${CLR_BOLD}${CLR_MAGENTA}all${CLR_RESET}${CLR_CYAN} — открыть доступ со ВСЕХ IP (без белого списка, как обычный VPN)${CLR_RESET}"
 echo -e "${CLR_CYAN}│   • Введите IP через запятую (например: ${CLR_WHITE}1.2.3.4, 5.6.7.8/24${CLR_CYAN})${CLR_RESET}"
 echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 while true; do
-  ask WHITELIST "Разрешённые IP/CIDR (Enter — текущий IP, all — без ограничений) [${ADMIN_IP:-all}]: "
-  WHITELIST=${WHITELIST:-${ADMIN_IP:-all}}
+  ask WHITELIST "Разрешённые IP/CIDR (Enter — текущий IP, all — без ограничений) [${ADMIN_IP:-нужно ввести}]: "
+  WHITELIST=${WHITELIST:-$ADMIN_IP}
   if ACL=$(python3 - "$WHITELIST" <<'PY_ACL'
 import ipaddress, sys
 s = sys.argv[1].strip()
@@ -322,7 +318,7 @@ if [[ "$SITE_MODE" == 2 ]]; then
   echo -e "${CLR_MAGENTA}│${CLR_RESET}"
   echo -e "${CLR_MAGENTA}│ ${CLR_GREEN}${CLR_BOLD}СПОСОБ 1 (ЗАГРУЗКА ЧЕРЕЗ POWERSHELL С КОМПЬЮТЕРА):${CLR_RESET}"
   echo -e "${CLR_MAGENTA}│   Выполните во втором окне PowerShell на вашем ПК:${CLR_RESET}"
-  echo -e "${CLR_MAGENTA}│   ${CLR_CYAN}scp -P 22 \"C:\\Users\\dex\\Downloads\\alania_site\\index.html\" root@${DOMAIN:-IP}:/root/index.html${CLR_RESET}"
+  echo -e "${CLR_MAGENTA}│   ${CLR_CYAN}scp -P 22 \"C:\\Users\\ВашеИмя\\Desktop\\index.html\" root@IP_СЕРВЕРА:/root/index.html${CLR_RESET}"
   echo -e "${CLR_MAGENTA}│   ${CLR_WHITE}Файл сохранится на сервере как: ${CLR_YELLOW}/root/index.html${CLR_RESET}"
   echo -e "${CLR_MAGENTA}│${CLR_RESET}"
   echo -e "${CLR_MAGENTA}│ ${CLR_GREEN}${CLR_BOLD}СПОСОБ 2 (ПРЯМАЯ ССЫЛКА НА GITHUB RAW / ЛЮБОЙ HTTPS URL):${CLR_RESET}"
@@ -341,9 +337,9 @@ if [[ "$SITE_MODE" == 2 ]]; then
     HTML_SOURCE=${HTML_SOURCE:-$DEF_HTML}
 
     # Handle direct URL download
-    if [[ "$HTML_SOURCE" =~ ^https?:// ]]; then
+    if [[ "$HTML_SOURCE" =~ ^https:// ]]; then
       echo -e "${CLR_BLUE}[*] Скачивание сайта по ссылке...${CLR_RESET}"
-      if curl -fL --connect-timeout 10 --max-time 30 "$HTML_SOURCE" -o "$WORK/downloaded_site.html" 2>/dev/null; then
+      if curl -fL --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 30 "$HTML_SOURCE" -o "$WORK/downloaded_site.html" 2>/dev/null; then
         HTML_SOURCE="$WORK/downloaded_site.html"
         echo -e "${CLR_GREEN}[+] Файл успешно скачан из интернета!${CLR_RESET}"
       else
@@ -511,8 +507,7 @@ except UnicodeDecodeError:
 if '\x00' in text or not re.search(r'<html\b|<!doctype|<body\b', text, re.I):
     raise SystemExit('Нужен валидный HTML-документ (содержащий html, body или doctype)')
 if not re.search(r'</html\s*>', text, re.I):
-    text += "\n</html>"
-    raw = text.encode('utf-8')
+    raise SystemExit('HTML-документ не содержит закрывающий тег </html>')
 destination.write_bytes(raw)
 print('[+] Готовый сайт успешно установлен в веб-директорию!')
 PY_UPLOAD
@@ -918,6 +913,89 @@ lbl_sec_faq_p = "Всё, что вам необходимо знать о наш
 lbl_footer_rights = f"© {year} {brand} ({city}). Все права защищены." if is_cyrillic else f"© {year} {brand} ({city}). All rights reserved."
 lbl_footer_desc = "Официальный информационный сайт компании." if is_cyrillic else "Official company informational portal."
 
+extras_ru = {
+    "1": [
+        ("Миграция Northline, 2025", "Перенос 46 сервисов в отказоустойчивый кластер, сокращение времени развёртывания на 63% и единый мониторинг инфраструктуры."),
+        ("Защита FinCore, 2024", "Пересмотр сетевого периметра, сегментация доступа и сценарии восстановления с контрольным временем запуска до 18 минут."),
+        ("Платформа Retail Flow, 2026", "CI/CD для 12 продуктовых команд, централизованные журналы и стабильная обработка до 2,4 млн событий в сутки."),
+    ],
+    "2": [
+        ("Коллекция Highlands", "Четыре сезонных лота из Эфиопии и Колумбии, профили обжарки под эспрессо и фильтр, еженедельные открытые каппинги."),
+        ("Городской завтрак", "Меню из 18 позиций, ремесленный хлеб на закваске и утренняя выпечка небольшими партиями каждый день."),
+        ("Coffee Lab", "Практические встречи по альтернативному завариванию, подбору помола и домашней работе с зерном."),
+    ],
+    "3": [
+        ("Резиденция Line House, 2025", "Дом площадью 420 м² с внутренним садом, пассивным затенением и индивидуальной столярной программой."),
+        ("Офис North Quarter, 2024", "Гибридное рабочее пространство на 180 мест, акустическое зонирование и модульные переговорные."),
+        ("Павильон River Point, 2026", "Общественное пространство с панорамным остеклением, локальными материалами и вечерним световым сценарием."),
+    ],
+    "4": [
+        ("Архив «Живая память»", "Оцифровано более 1 200 документов и 340 фотографий; материалы объединены в тематические коллекции с научными комментариями."),
+        ("Экспедиция «Горные маршруты»", "Полевое описание 27 объектов, фотофиксация, координатная привязка и интервью с местными хранителями традиций."),
+        ("Лекторий «Диалог эпох»", "Цикл из 16 открытых встреч об архитектуре, ремёслах, семейных архивах и культурной памяти региона."),
+    ],
+    "5": [
+        ("Реструктуризация Meridian, 2025", "Аудит 86 договоров, новая матрица полномочий и снижение операционных юридических рисков на 41%."),
+        ("Сделка Vector Capital, 2024", "Правовая проверка, согласование корпоративных условий и сопровождение закрытия сделки стоимостью 780 млн ₽."),
+        ("Комплаенс-программа Atlas, 2026", "Регламенты для 14 подразделений, обучение руководителей и единый защищённый контур договорной работы."),
+    ],
+}
+extras_en = {
+    "1": [
+        ("Northline Migration, 2025", "Migrated 46 services into a resilient cluster, reduced deployment time by 63%, and introduced unified infrastructure monitoring."),
+        ("FinCore Security, 2024", "Redesigned network segmentation, access controls, and recovery playbooks with an 18-minute target restoration window."),
+        ("Retail Flow Platform, 2026", "Delivered CI/CD for 12 product teams, centralized observability, and processing for 2.4 million daily events."),
+    ],
+    "2": [
+        ("Highlands Collection", "Four seasonal Ethiopian and Colombian lots with dedicated espresso and filter roast profiles and weekly public cuppings."),
+        ("City Breakfast", "An 18-item breakfast menu, naturally leavened bread, and small-batch pastries baked fresh every morning."),
+        ("Coffee Lab", "Hands-on sessions covering alternative brewing, grind calibration, water recipes, and home coffee preparation."),
+    ],
+    "3": [
+        ("Line House Residence, 2025", "A 420 m² home featuring an internal garden, passive shading, and a custom architectural joinery program."),
+        ("North Quarter Office, 2024", "A hybrid workplace for 180 people with acoustic zoning, modular meeting rooms, and flexible project areas."),
+        ("River Point Pavilion, 2026", "A public venue combining panoramic glazing, locally sourced materials, and a layered evening lighting scheme."),
+    ],
+    "4": [
+        ("Living Memory Archive", "Digitized more than 1,200 records and 340 photographs into curated thematic collections with scholarly notes."),
+        ("Mountain Routes Expedition", "Documented 27 sites through field surveys, geospatial mapping, photography, and oral-history interviews."),
+        ("Dialogue of Eras Lectures", "A 16-event public series exploring architecture, crafts, family archives, and the region’s cultural memory."),
+    ],
+    "5": [
+        ("Meridian Restructuring, 2025", "Reviewed 86 contracts, introduced a new authority matrix, and reduced measured operational legal exposure by 41%."),
+        ("Vector Capital Transaction, 2024", "Managed legal due diligence, corporate negotiations, and closing support for a $9.4 million transaction."),
+        ("Atlas Compliance Program, 2026", "Created policies for 14 divisions, trained senior managers, and launched a secure contract workflow."),
+    ],
+}
+team = ([
+    ("Анна Волкова", "Управляющий партнёр", "Стратегия, развитие и контроль качества проектов."),
+    ("Михаил Орлов", "Руководитель практики", "Методология, сложные проекты и работа с ключевыми клиентами."),
+    ("Елена Соколова", "Директор по сервису", "Клиентский опыт, партнёрские программы и операционные процессы."),
+] if is_cyrillic else [
+    ("Anna Volkova", "Managing Partner", "Strategy, business development, and project quality oversight."),
+    ("Michael Orlov", "Practice Director", "Methodology, complex engagements, and key client relationships."),
+    ("Elena Sokolova", "Service Director", "Client experience, partner programs, and operational delivery."),
+])
+reviews = ([
+    ("Алексей Морозов", "Nord Project", f"Команда {brand} быстро разобралась в задаче, предложила понятный план и выдержала согласованные сроки."),
+    ("Ирина Лебедева", "Forma Group", "Особенно ценим внимание к деталям, прозрачную коммуникацию и готовность отвечать за итоговый результат."),
+    ("Павел Ким", "Vector Alliance", "Сотрудничество продолжается второй год: процессы стали предсказуемее, а качество стабильно остаётся высоким."),
+] if is_cyrillic else [
+    ("Alex Morozov", "Nord Project", f"The {brand} team understood the brief quickly, proposed a clear plan, and delivered within the agreed timeline."),
+    ("Irina Lebedeva", "Forma Group", "We especially value the attention to detail, transparent communication, and ownership of the final result."),
+    ("Paul Kim", "Vector Alliance", "Our partnership is now in its second year: delivery is more predictable and quality remains consistently high."),
+])
+case_items = (extras_ru if is_cyrillic else extras_en).get(str(theme_idx), [])
+lbl_cases_tag = "Практика" if is_cyrillic else "Selected Work"
+lbl_cases_h2 = "Проекты и результаты" if is_cyrillic else "Projects & Results"
+lbl_cases_p = "Несколько примеров задач, реализованных командой за последние годы" if is_cyrillic else "A selection of engagements delivered by the team in recent years"
+lbl_team_tag = "Команда" if is_cyrillic else "Leadership"
+lbl_team_h2 = "Люди, отвечающие за результат" if is_cyrillic else "People Behind the Work"
+lbl_team_p = "Профильные специалисты с практическим опытом в своём направлении" if is_cyrillic else "Specialists with hands-on experience in their respective fields"
+lbl_reviews_tag = "Отзывы" if is_cyrillic else "Client Stories"
+lbl_reviews_h2 = "Что говорят партнёры" if is_cyrillic else "What Our Partners Say"
+lbl_reviews_p = "Долгосрочные отношения строятся на понятных процессах и измеримом результате" if is_cyrillic else "Long-term relationships built on clear processes and measurable outcomes"
+
 services_html = ""
 for title, desc in t["services"]:
     services_html += f"""
@@ -946,6 +1024,19 @@ for q, a in t["faq"]:
             <summary>{html.escape(q)}</summary>
             <div class="faq-body">{html.escape(a)}</div>
         </details>"""
+
+cases_html = "".join(
+    f'<div class="card"><h3>{html.escape(title)}</h3><p>{html.escape(desc)}</p></div>'
+    for title, desc in case_items
+)
+team_html = "".join(
+    f'<div class="card"><h3>{html.escape(name)}</h3><p><strong>{html.escape(role)}</strong></p><p>{html.escape(desc)}</p></div>'
+    for name, role, desc in team
+)
+reviews_html = "".join(
+    f'<div class="card"><p>“{html.escape(quote)}”</p><h3 style="margin-top:1.25rem">{html.escape(name)}</h3><p>{html.escape(company)}</p></div>'
+    for name, company, quote in reviews
+)
 
 lang_code = "ru" if is_cyrillic else "en"
 
@@ -1201,6 +1292,7 @@ html_code = f"""<!DOCTYPE html>
             <nav>
                 <ul>
                     <li><a href="#services">{lbl_services}</a></li>
+                    <li><a href="#projects">{lbl_cases_tag}</a></li>
                     <li><a href="#about">{lbl_about}</a></li>
                     <li><a href="#faq">{lbl_faq}</a></li>
                     <li><a href="#contacts" class="btn-sm">{lbl_contact_btn}</a></li>
@@ -1233,6 +1325,33 @@ html_code = f"""<!DOCTYPE html>
             <div class="grid-cards">
                 {services_html}
             </div>
+        </section>
+
+        <section class="section" id="projects">
+            <div class="section-header">
+                <div class="section-tag">{lbl_cases_tag}</div>
+                <h2>{lbl_cases_h2}</h2>
+                <p>{lbl_cases_p}</p>
+            </div>
+            <div class="grid-cards">{cases_html}</div>
+        </section>
+
+        <section class="section" id="team">
+            <div class="section-header">
+                <div class="section-tag">{lbl_team_tag}</div>
+                <h2>{lbl_team_h2}</h2>
+                <p>{lbl_team_p}</p>
+            </div>
+            <div class="grid-cards">{team_html}</div>
+        </section>
+
+        <section class="section" id="reviews">
+            <div class="section-header">
+                <div class="section-tag">{lbl_reviews_tag}</div>
+                <h2>{lbl_reviews_h2}</h2>
+                <p>{lbl_reviews_p}</p>
+            </div>
+            <div class="grid-cards">{reviews_html}</div>
         </section>
 
         <section class="section" id="about">
@@ -1548,7 +1667,7 @@ echo -e "${CLR_BLUE}│ ${CLR_WHITE}Создание защищённой кон
 echo -e "${CLR_BLUE}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 SITE_CSP="add_header Content-Security-Policy \"default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src https: data:; script-src 'none'; connect-src 'none'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'\" always;"
 # User-supplied static HTML may intentionally contain its own JS/CSS.
-if [[ "$SITE_MODE" == 3 ]]; then SITE_CSP=''; fi
+if [[ "$SITE_MODE" == 2 ]]; then SITE_CSP=''; fi
 cat >> "$NGINX_SITE" <<EOF
 server {
     listen $PUBLIC_TLS_PORT ssl;
@@ -1564,7 +1683,7 @@ server {
     set_real_ip_from ::1;
     real_ip_header X-Forwarded-For;
     location ^~ $XHTTP_PATH {
-        satisfy any;
+        satisfy all;
         # Local health checks and the local reverse proxy remain trusted.
         allow 127.0.0.1;
         allow ::1;
@@ -1599,7 +1718,7 @@ server {
     set_real_ip_from 127.0.0.1;
     set_real_ip_from ::1;
     real_ip_header X-Forwarded-For;
-    satisfy any;
+    satisfy all;
     $ACL
     location /$PANEL_PATH/ {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
@@ -1705,10 +1824,10 @@ for old in before['obj']:
 print('Проверено: прежние подключения и их конфигурации сохранены.')
 PY_PRESERVED
 fi
-# Exercise the local chain (non-fatal, so network/TLS handshake edge cases do not abort the script).
+# Exercise the complete local chain before reporting success.
 XRAY=/usr/local/x-ui/bin/xray-linux-$ARCH
-if [[ -x "$XRAY" ]]; then
-  python3 - "$STATE/client.json" "$WORK/test-client.json" "$WORK/test-port" <<'PY_TEST_CLIENT'
+[[ -x "$XRAY" ]] || die 'Не найден исполняемый файл Xray для сквозной проверки.'
+python3 - "$STATE/client.json" "$WORK/test-client.json" "$WORK/test-port" <<'PY_TEST_CLIENT'
 import json, socket, sys
 from pathlib import Path
 with socket.socket() as sock:
@@ -1720,28 +1839,23 @@ cfg['outbounds'][0]['settings']['vnext'][0]['address'] = '127.0.0.1'
 Path(sys.argv[2]).write_text(json.dumps(cfg), encoding='utf-8')
 Path(sys.argv[3]).write_text(str(port), encoding='utf-8')
 PY_TEST_CLIENT
-  TEST_PORT=$(cat "$WORK/test-port")
-  if "$XRAY" run -test -config "$WORK/test-client.json" >/dev/null 2>&1; then
-    "$XRAY" run -config "$WORK/test-client.json" > "$STATE/selftest.log" 2>&1 &
-    TEST_PID=$!
-    ready=0
-    for ((n=0; n<15; n++)); do
-      if [[ -n "$(ss -H -ltn "sport = :$TEST_PORT")" ]]; then ready=1; break; fi
-      sleep 1
-    done
-    if [[ $ready == 1 ]]; then
-      if curl -fsS --noproxy '' --proxy "socks5h://127.0.0.1:$TEST_PORT" \
-        --connect-timeout 8 --max-time 12 https://example.com/ -o /dev/null 2>/dev/null; then
-        echo -e "${CLR_GREEN}[+] Локальный сквозной тест VLESS-XHTTP успешно пройден!${CLR_RESET}"
-      else
-        echo -e "${CLR_YELLOW}[*] Сервисы Nginx, 3X-UI и Xray активны и готовы к работе.${CLR_RESET}"
-      fi
-    fi
-    kill "$TEST_PID" 2>/dev/null || true
-    wait "$TEST_PID" 2>/dev/null || true
-    TEST_PID=''
-  fi
-fi
+TEST_PORT=$(cat "$WORK/test-port")
+"$XRAY" run -test -config "$WORK/test-client.json" || die 'Xray отклонил конфигурацию тестового клиента.'
+"$XRAY" run -config "$WORK/test-client.json" > "$STATE/selftest.log" 2>&1 &
+TEST_PID=$!
+ready=0
+for ((n=0; n<15; n++)); do
+  if [[ -n "$(ss -H -ltn "sport = :$TEST_PORT")" ]]; then ready=1; break; fi
+  sleep 1
+done
+[[ $ready == 1 ]] || die "Тестовый Xray не запустился. См. $STATE/selftest.log"
+curl -fsS --noproxy '' --proxy "socks5h://127.0.0.1:$TEST_PORT" \
+  --connect-timeout 15 --max-time 45 https://example.com/ -o /dev/null \
+  || die "Сквозной тест VLESS-XHTTP не передал HTTPS-трафик. См. $STATE/selftest.log"
+kill "$TEST_PID" 2>/dev/null || true
+wait "$TEST_PID" 2>/dev/null || true
+TEST_PID=''
+echo -e "${CLR_GREEN}[+] Локальный сквозной тест VLESS-XHTTP успешно пройден!${CLR_RESET}"
 
 sed -i '/^Статус:/d' "$STATE/access.txt" 2>/dev/null || true
 printf '\nСтатус: Установка успешно завершена.\n' >> "$STATE/access.txt"
@@ -1779,7 +1893,7 @@ echo ""
 echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} 🌐 ВАШ САЙТ-ПРИКРЫТИЕ ${CLR_CYAN}]─────────────────────────────────────────${CLR_RESET}"
 echo -e "${CLR_CYAN}│ ${CLR_BOLD}${CLR_GREEN}$SITE_URL${CLR_RESET}"
 echo -e "${CLR_CYAN}│ ${CLR_WHITE}Статус: ${CLR_GREEN}Активен по HTTPS${CLR_WHITE} (сертификат Let's Encrypt)${CLR_RESET}"
-echo -e "${CLR_CYAN}│ ${CLR_WHITE}Открыт для обычных посетителей, цензоров и роботов.${CLR_RESET}"
+echo -e "${CLR_CYAN}│ ${CLR_WHITE}Сайт открыт для всех посетителей.${CLR_RESET}"
 echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 echo ""
 
