@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fresh VPS installer. See README.md for requirements and recovery.
+# Interactive fresh/additive VPS installer. See README.md for requirements and recovery.
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C.UTF-8
@@ -30,20 +30,62 @@ case "$(uname -m)" in
   *) die 'Поддерживаются только amd64 и arm64.' ;;
 esac
 readonly VERSION=v3.8.5
-readonly STATE=/etc/vless-installer
-readonly WEBROOT=/var/www/vless-site
-readonly ACME=/var/www/vless-acme
+echo '1 — чистый VPS: установить 3x-ui, XHTTP и сайт'
+echo '2 — 3x-ui уже установлена: сохранить всё и добавить XHTTP и сайт'
+while true; do
+  ask INSTALL_MODE 'Режим установки [1]: '
+  INSTALL_MODE=${INSTALL_MODE:-1}
+  [[ "$INSTALL_MODE" == 1 || "$INSTALL_MODE" == 2 ]] && break
+  echo 'Введите 1 или 2.'
+done
 readonly XUI=/usr/local/x-ui/x-ui
 readonly PANEL_PORT=2053
 readonly PUBLIC_PANEL_PORT=8443
-readonly XRAY_PORT=10000
-for target in "$STATE" /etc/x-ui /usr/local/x-ui "$WEBROOT" /etc/nginx/sites-available/vless-installer; do
-  [[ ! -e "$target" ]] || die "Обнаружено $target. Нужен чистый VPS: повторный запуск не перезаписывает существующую установку."
+PUBLIC_TLS_PORT=443
+XRAY_PORT=10000
+INSTANCE=vless-installer
+if [[ "$INSTALL_MODE" == 2 ]]; then
+  [[ -x "$XUI" && -f /etc/x-ui/x-ui.db ]] || die 'Нужна локальная 3x-ui с SQLite в /etc/x-ui/x-ui.db. Docker и PostgreSQL пока не поддерживаются.'
+  if env | grep -q '^XUI_DB_'; then die 'Обнаружены переопределения БД через окружение; автоматическое дополнение остановлено.'; fi
+  for env_file in /etc/default/x-ui /etc/sysconfig/x-ui /etc/conf.d/x-ui /usr/local/x-ui/.env; do
+    if [[ -f "$env_file" ]] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?XUI_DB_' "$env_file"; then
+      die "Обнаружены настройки БД в $env_file. Этот режим поддерживает только стандартную SQLite без переопределений."
+    fi
+  done
+  command -v python3 >/dev/null || die 'Установите python3 перед дополнением существующей панели.'
+  systemctl is-active --quiet x-ui || die 'Существующая служба x-ui должна работать.'
+  EXISTING_VERSION=$("$XUI" -v)
+  [[ "${EXISTING_VERSION#v}" == "${VERSION#v}" ]] || die "Режим дополнения рассчитан на $VERSION. Обнаружено: $EXISTING_VERSION. Автообновление существующей панели не выполняется."
+  INSTANCE=vless-installer-$(date +%s)-$$
+  ask PUBLIC_TLS_PORT 'Внешний HTTPS-порт нового подключения (если 443 занят, например 9443) [443]: '
+  PUBLIC_TLS_PORT=${PUBLIC_TLS_PORT:-443}
+  [[ "$PUBLIC_TLS_PORT" =~ ^[0-9]{1,5}$ ]] || die 'Некорректный порт.'
+  PUBLIC_TLS_PORT=$((10#$PUBLIC_TLS_PORT))
+  (( PUBLIC_TLS_PORT >= 1024 && PUBLIC_TLS_PORT <= 65535 || PUBLIC_TLS_PORT == 443 )) || die 'Допустим 443 или порт 1024–65535.'
+  XRAY_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+fi
+export PUBLIC_TLS_PORT
+readonly STATE=/etc/$INSTANCE
+readonly WEBROOT=/var/www/$INSTANCE-site
+readonly ACME=/var/www/$INSTANCE-acme
+readonly NGINX_SITE=/etc/nginx/sites-available/$INSTANCE
+targets=("$STATE" "$WEBROOT" "$NGINX_SITE")
+if [[ "$INSTALL_MODE" == 1 ]]; then targets+=(/etc/x-ui /usr/local/x-ui); fi
+for target in "${targets[@]}"; do
+  [[ ! -e "$target" ]] || die "Обнаружено $target. Выберите режим дополнения или чистый VPS."
 done
 command -v ss >/dev/null || die 'Не найдена ss (пакет iproute2).'
-for port in 80 443 2096 "$PANEL_PORT" "$PUBLIC_PANEL_PORT" "$XRAY_PORT"; do
-  [[ -z "$(ss -H -ltn "sport = :$port")" ]] || die "Порт $port занят. Сначала выясните, какой службой."
+ports=("$PUBLIC_TLS_PORT" "$XRAY_PORT")
+if [[ "$INSTALL_MODE" == 1 ]]; then ports+=(80 2096 "$PANEL_PORT" "$PUBLIC_PANEL_PORT"); fi
+for port in "${ports[@]}"; do
+  [[ -z "$(ss -H -ltn "sport = :$port")" ]] || die "Порт $port занят. Службы не остановлены. Выберите другой HTTPS-порт в режиме дополнения."
 done
+if [[ "$INSTALL_MODE" == 2 && -n "$(ss -H -ltn 'sport = :80')" ]]; then
+  LISTENERS=$(ss -H -ltnp 'sport = :80')
+  while IFS= read -r listener; do
+    [[ "$listener" == *'"nginx"'* ]] || die 'Порт 80 занят не Nginx. Этот вариант дополнения требует отдельной настройки ACME.'
+  done <<< "$LISTENERS"
+fi
 exec 9>/run/vless-installer.lock
 flock -n 9 || die 'Другой экземпляр установщика уже работает.'
 DOMAIN=${1:-}
@@ -52,7 +94,7 @@ STAGE=dependencies
 export DEBIAN_FRONTEND=noninteractive
 echo 'Установка зависимостей. При занятости APT ждём до 300 секунд; блокировки не удаляются.'
 apt-get -o DPkg::Lock::Timeout=300 update
-apt-get -o DPkg::Lock::Timeout=300 install -y ca-certificates curl nginx certbot python3 openssl qrencode tar
+apt-get -o DPkg::Lock::Timeout=300 install -y ca-certificates curl nginx certbot python3 openssl qrencode tar nftables
 while true; do
 if NORMALIZED_DOMAIN=$(python3 - "$DOMAIN" <<'PY_DOMAIN'
 import re, sys
@@ -76,14 +118,17 @@ PY_DOMAIN
 fi
 ask DOMAIN 'Введите домен заново (или исправленный прежний домен): '
 done
-echo "Домен: $DOMAIN. Все A/AAAA должны указывать на этот VPS; TCP 80/443/8443 должны быть доступны в панели хостинга."
+echo "Домен: $DOMAIN. Все A/AAAA должны указывать на этот VPS; откройте TCP 80 и $PUBLIC_TLS_PORT в панели хостинга."
+if [[ "$INSTALL_MODE" == 1 ]]; then echo 'Для новой панели также нужен TCP 8443 с административных IP.'; fi
 echo 'Для этой инструкции используйте DNS only. Неверную AAAA удалите или исправьте.'
 ADMIN_IP=${SSH_CONNECTION:-}
 ADMIN_IP=${ADMIN_IP%% *}
 ADMIN_IP=${ADMIN_IP:-${SSH_CLIENT:-}}
 ADMIN_IP=${ADMIN_IP%% *}
 while true; do
-ask WHITELIST "IP/CIDR для панели через запятую, all — всем [${ADMIN_IP:-обязательно указать}]: "
+echo 'Белый список разрешает доступ к новому VPN; для новой панели применяется тот же список. Сайт открыт всем.'
+echo 'Укажите внешние IP устройств/сетей ДО включения VPN. При смене IP список потребуется обновить.'
+ask WHITELIST "Разрешённые IP/CIDR через запятую, all — без ограничения [${ADMIN_IP:-обязательно указать}]: "
 WHITELIST=${WHITELIST:-$ADMIN_IP}
 if ACL=$(python3 - "$WHITELIST" <<'PY_ACL'
 import ipaddress, sys
@@ -105,13 +150,9 @@ echo 'Проверьте адреса и повторите ввод.'
 done
 PRESETS=('Tokyo|Kissa Studio|Specialty coffee|Japanese minimalism' 'Berlin|Bauhaus Lab|Architecture|Sustainable design' 'Paris|Atelier Lumiere|Botanical fragrances|Handcrafted scents')
 IFS='|' read -r DEF_CITY DEF_BRAND DEF_NICHE DEF_VIBE <<< "${PRESETS[RANDOM % ${#PRESETS[@]}]}"
-ask CITY "Город [$DEF_CITY]: "; CITY=${CITY:-$DEF_CITY}
-ask BRAND "Название [$DEF_BRAND]: "; BRAND=${BRAND:-$DEF_BRAND}
-ask NICHE "Сфера деятельности [$DEF_NICHE]: "; NICHE=${NICHE:-$DEF_NICHE}
-ask VIBE "Ключевые слова / стиль [$DEF_VIBE]: "; VIBE=${VIBE:-$DEF_VIBE}
 echo 'Для ИИ используется Pollinations. Параметры сайта отправляются сервису; действуют его тарифы и лимиты.'
 while true; do
-  echo 'Создание сайта: 1 — нейросеть, 2 — встроенный шаблон без ключа.'
+  echo 'Создание сайта: 1 — нейросеть, 2 — встроенный шаблон, 3 — свой HTML-файл.'
   ask SITE_MODE 'Ваш выбор [1]: '
   SITE_MODE=${SITE_MODE:-1}
   case "$SITE_MODE" in
@@ -121,9 +162,32 @@ while true; do
       [[ -n "$POLLINATIONS_API_KEY" ]] && break
       ;;
     2) POLLINATIONS_API_KEY=''; break ;;
-    *) echo 'Введите 1 или 2.' ;;
+    3) POLLINATIONS_API_KEY=''; break ;;
+    *) echo 'Введите 1, 2 или 3.' ;;
   esac
 done
+if [[ "$SITE_MODE" == 3 ]]; then
+  echo 'Скрипт работает на VPS и не видит файлы вашего компьютера.'
+  echo 'Оставьте это окно SSH открытым. Во ВТОРОМ окне PowerShell/терминала НА КОМПЬЮТЕРЕ выполните:'
+  echo '  scp -P 22 "C:\Users\ВашеИмя\Desktop\index.html" user@IP_СЕРВЕРА:~/my-site.html'
+  echo 'На macOS/Linux пример: scp -P 22 ~/Desktop/index.html user@IP_СЕРВЕРА:~/my-site.html'
+  echo 'Замените путь на свой, user/IP — на SSH-логин и адрес VPS, 22 — на ваш SSH-порт.'
+  echo 'Либо подключитесь через WinSCP/FileZilla по SFTP и перетащите HTML в домашний каталог SSH-пользователя.'
+  echo 'После загрузки вернитесь сюда и укажите ПОЛНЫЙ ПУТЬ НА VPS:'
+  echo '  /home/user/my-site.html (для root: /root/my-site.html). Путь C:\... сюда не подходит.'
+  echo 'Нужен один UTF-8 HTML-файл: встроенные CSS/JS и картинки data: либо абсолютные HTTPS-ссылки.'
+  echo 'Отдельные локальные картинки, CSS и JS этим режимом не переносятся. PHP/обработка форм не устанавливаются.'
+  while true; do
+    ask HTML_SOURCE 'Полный путь загруженного HTML на VPS: '
+    if [[ "$HTML_SOURCE" == /* && -f "$HTML_SOURCE" && -r "$HTML_SOURCE" && -s "$HTML_SOURCE" ]]; then break; fi
+    echo 'Файл не найден, пуст или недоступен. Завершите загрузку и повторите ввод.'
+  done
+else
+  ask CITY "Город [$DEF_CITY]: "; CITY=${CITY:-$DEF_CITY}
+  ask BRAND "Название [$DEF_BRAND]: "; BRAND=${BRAND:-$DEF_BRAND}
+  ask NICHE "Сфера деятельности [$DEF_NICHE]: "; NICHE=${NICHE:-$DEF_NICHE}
+  ask VIBE "Ключевые слова / стиль [$DEF_VIBE]: "; VIBE=${VIBE:-$DEF_VIBE}
+fi
 export POLLINATIONS_API_KEY
 if [[ -n "$POLLINATIONS_API_KEY" ]]; then
   ask AI_MODEL 'ID текстовой модели из каталога Pollinations [openai]: '
@@ -131,8 +195,88 @@ if [[ -n "$POLLINATIONS_API_KEY" ]]; then
 fi
 WORK=$(mktemp -d /tmp/vless-installer.XXXXXXXX)
 install -d -m 700 "$STATE"
+if [[ "$INSTALL_MODE" == 2 ]]; then
+  STAGE=backup
+  install -d -m 700 "$STATE/backup"
+  python3 - "$STATE/backup/x-ui.db" <<'PY_BACKUP'
+import sqlite3, sys
+with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro', uri=True, timeout=30) as src:
+    with sqlite3.connect(sys.argv[1]) as dst:
+        src.backup(dst)
+        if dst.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+            raise SystemExit('Резервная копия БД не прошла проверку')
+PY_BACKUP
+  if [[ -d /etc/nginx ]]; then tar -czf "$STATE/backup/nginx.tar.gz" -C /etc nginx; fi
+  systemctl cat x-ui > "$STATE/backup/x-ui.service.txt"
+  echo "Резервная копия сохранена: $STATE/backup"
+  ask EXISTING_PANEL_URL 'Текущий URL панели с секретным путём (http:// или https://): '
+  read -r -s -p 'API-токен существующей панели (Settings → API Tokens): ' TOKEN </dev/tty
+  echo
+  [[ -n "$TOKEN" && "$TOKEN" != *$'\n'* && "$TOKEN" != *'"'* && "$TOKEN" != *'\'* ]] || die 'Некорректный API-токен.'
+  printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$WORK/curl-auth"
+  unset TOKEN
+  BASE=$(python3 - "$EXISTING_PANEL_URL" "$WORK/curl-auth" <<'PY_EXISTING_URL'
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
+u = urlsplit(sys.argv[1].strip())
+if u.scheme not in ('http', 'https') or not u.hostname or u.username or u.password or u.query or u.fragment:
+    raise SystemExit('Нужен URL панели без логина, query и fragment')
+if any(c in sys.argv[1] for c in '\r\n"\\') or any(c.isspace() for c in sys.argv[1]):
+    raise SystemExit('Недопустимые символы URL')
+port = u.port or (443 if u.scheme == 'https' else 80)
+host = '['+u.hostname+']' if ':' in u.hostname else u.hostname
+# Connect only to this VPS, while retaining the real hostname for TLS/SNI.
+with Path(sys.argv[2]).open('a', encoding='utf-8') as f:
+    f.write(f'connect-to = "{host}:{port}:127.0.0.1:{port}"\n')
+print(f'{u.scheme}://{host}:{port}{u.path.rstrip("/")}/panel/api')
+PY_EXISTING_URL
+)
+  curl -fsS --noproxy '*' --config "$WORK/curl-auth" --max-time 15 "$BASE/inbounds/list" -o "$STATE/backup/inbounds.json"
+  python3 - "$STATE/backup/inbounds.json" <<'PY_EXISTING_READY'
+import json, sys
+from pathlib import Path
+r = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+if r.get('success') is not True or not isinstance(r.get('obj'), list):
+    raise SystemExit('Не удалось прочитать существующие подключения; изменения не начаты')
+PY_EXISTING_READY
+  echo 'Старые клиенты сохраняются. API панели при добавлении inbound может перезапустить Xray и кратковременно прервать соединения.'
+  if command -v nginx >/dev/null; then
+    nginx -T > "$WORK/nginx-before.txt" 2>&1
+    python3 - "$DOMAIN" "$WORK/nginx-before.txt" <<'PY_NGINX_DOMAIN'
+import fnmatch, re, sys
+from pathlib import Path
+domain = sys.argv[1]
+config = re.sub(r'(?m)#.*$', '', Path(sys.argv[2]).read_text(encoding='utf-8'))
+for names in re.findall(r'\bserver_name\s+([^;]+);', config):
+    for name in names.split():
+        name = name.strip('"\'').lower()
+        if name.startswith('~') or fnmatch.fnmatchcase(domain, name) or (name.startswith('.') and (domain == name[1:] or domain.endswith(name))):
+            raise SystemExit('Домен уже обслуживается Nginx или есть regex server_name. Укажите отдельный свободный поддомен; существующий сайт не изменён.')
+PY_NGINX_DOMAIN
+  fi
+fi
 install -d -m 755 "$WEBROOT" "$ACME" "$ACME/.well-known" "$ACME/.well-known/acme-challenge"
 STAGE=site
+if [[ "$SITE_MODE" == 3 ]]; then
+  python3 - "$HTML_SOURCE" "$WEBROOT/index.html" <<'PY_UPLOAD'
+import re, sys
+from pathlib import Path
+source, destination = map(Path, sys.argv[1:])
+with source.open('rb') as f:
+    raw = f.read(20 * 1024 * 1024 + 1)
+if len(raw) > 20 * 1024 * 1024:
+    raise SystemExit('HTML превышает 20 МБ; уменьшите размер файла')
+try:
+    text = raw.decode('utf-8-sig')
+except UnicodeDecodeError:
+    raise SystemExit('Сохраните HTML в UTF-8 и загрузите повторно')
+if '\x00' in text or not re.search(r'<html\b', text, re.I) or not re.search(r'</html\s*>', text, re.I):
+    raise SystemExit('Нужен полный HTML-документ с <html> и </html>')
+destination.write_bytes(raw)
+print('Готовый сайт скопирован без изменения содержимого. Исходный файл сохранён.')
+PY_UPLOAD
+else
 timeout 150 python3 - "$CITY" "$BRAND" "$NICHE" "$VIBE" "$WEBROOT/index.html" <<'PY_SITE'
 import sys, os, json, re, urllib.request, html
 from datetime import datetime
@@ -408,32 +552,71 @@ temporary.write_text(html_content, encoding='utf-8')
 temporary.replace(destination)
 print(f"[+] Сайт записан: {len(html_content.encode('utf-8'))} байт")
 PY_SITE
+fi
 unset POLLINATIONS_API_KEY
 chmod 644 "$WEBROOT/index.html"
+printf '%s\n' "$WHITELIST" > "$STATE/whitelist.txt"
+STAGE=firewall
+# Never flush the host ruleset: add only an isolated guard for this backend.
+NFT_TABLE=${INSTANCE//-/_}
+cat > "$STATE/firewall.nft" <<EOF
+table inet $NFT_TABLE {
+    chain protect_xray {
+        type filter hook input priority -10; policy accept;
+        iifname != "lo" tcp dport $XRAY_PORT counter drop
+    }
+}
+EOF
+cat > "$STATE/apply-firewall.sh" <<EOF
+#!/bin/sh
+set -eu
+{
+    if /usr/sbin/nft list table inet $NFT_TABLE >/dev/null 2>&1; then
+        printf 'delete table inet $NFT_TABLE\\n'
+    fi
+    cat '$STATE/firewall.nft'
+} | /usr/sbin/nft -f -
+EOF
+chmod 700 "$STATE/apply-firewall.sh"
+cat > "/etc/systemd/system/$INSTANCE-firewall.service" <<EOF
+[Unit]
+Description=Local Xray backend firewall ($INSTANCE)
+After=network-pre.target nftables.service ufw.service
+Before=x-ui.service nginx.service
+[Service]
+Type=oneshot
+ExecStart=$STATE/apply-firewall.sh
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+EOF
+nft -c -f "$STATE/firewall.nft"
+systemctl daemon-reload
+systemctl enable --now "$INSTANCE-firewall.service"
 STAGE=certificate
 # ACME webroot remains available for automatic renewals without stopping Nginx.
-cat > /etc/nginx/sites-available/vless-installer <<EOF
+cat > "$NGINX_SITE" <<EOF
 server {
     listen 80;
     server_name $DOMAIN;
     root $ACME;
     location ^~ /.well-known/acme-challenge/ { default_type text/plain; try_files \$uri =404; }
-    location / { return 301 https://$DOMAIN\$request_uri; }
+    location / { return 301 https://$DOMAIN:$PUBLIC_TLS_PORT\$request_uri; }
 }
 EOF
 if [[ -s /proc/net/if_inet6 ]]; then
-  sed -i '/listen 80;/a\    listen [::]:80;' /etc/nginx/sites-available/vless-installer
+  sed -i '/listen 80;/a\    listen [::]:80;' "$NGINX_SITE"
 fi
-ln -s /etc/nginx/sites-available/vless-installer /etc/nginx/sites-enabled/vless-installer
+ln -s "$NGINX_SITE" "/etc/nginx/sites-enabled/$INSTANCE"
 nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
 # Preserve SSH rules and current firewall policy. Never turn UFW on blindly.
 if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then
   ufw allow 80/tcp
-  ufw allow 443/tcp
+  ufw allow "$PUBLIC_TLS_PORT/tcp"
   # Access is restricted independently by the Nginx ACL, including IPv6.
-  ufw allow "$PUBLIC_PANEL_PORT/tcp"
+  if [[ "$INSTALL_MODE" == 1 ]]; then ufw allow "$PUBLIC_PANEL_PORT/tcp"; fi
 fi
 until certbot certonly --webroot -w "$ACME" -d "$DOMAIN" --cert-name "$DOMAIN" \
   --non-interactive --agree-tos --register-unsafely-without-email; do
@@ -444,6 +627,9 @@ done
 CERT_FILE=/etc/letsencrypt/live/$DOMAIN/fullchain.pem
 KEY_FILE=/etc/letsencrypt/live/$DOMAIN/privkey.pem
 [[ -s "$CERT_FILE" && -s "$KEY_FILE" ]]
+XHTTP_PATH=/$(openssl rand -hex 16)/
+CLIENT_UUID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+if [[ "$INSTALL_MODE" == 1 ]]; then
 STAGE=panel
 curl -fL --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 600 --retry 2 \
   "https://github.com/MHSanaei/3x-ui/releases/download/$VERSION/x-ui-linux-$ARCH.tar.gz" -o "$WORK/x-ui.tar.gz"
@@ -457,8 +643,6 @@ install -d -m 755 /var/log/x-ui
 PANEL_USER=admin
 PANEL_PASS=$(openssl rand -hex 18)
 PANEL_PATH=$(openssl rand -hex 16)
-XHTTP_PATH=/$(openssl rand -hex 16)/
-CLIENT_UUID=$(python3 -c 'import uuid; print(uuid.uuid4())')
 cat > "$STATE/access.txt" <<EOF
 Сайт: https://$DOMAIN/
 Панель: https://$DOMAIN:$PUBLIC_PANEL_PORT/$PANEL_PATH/
@@ -522,19 +706,21 @@ from pathlib import Path
 if json.loads(Path(sys.argv[1]).read_text(encoding='utf-8')).get('success') is not True:
     raise SystemExit('Не удалось отключить публичные подписки')
 PY_SETTINGS_RESULT
+else
+  cd /usr/local/x-ui
+  printf 'Сайт: https://%s:%s/\nПанель: %s\nПрежние настройки панели сохранены.\n' "$DOMAIN" "$PUBLIC_TLS_PORT" "$EXISTING_PANEL_URL" > "$STATE/access.txt"
+fi
 python3 - "$CLIENT_UUID" "$DOMAIN" "$XHTTP_PATH" "$XRAY_PORT" "$WORK/inbound.json" <<'PY_INBOUND'
 import json, sys
 from pathlib import Path
 uid, domain, path, port, out = sys.argv[1:]
-client = dict(id=uid, email='initial-client', enable=True, flow='', limitIp=0,
+client = dict(id=uid, email='initial-' + uid[:12], enable=True, flow='', limitIp=0,
               totalGB=0, expiryTime=0, tgId=0, subId='', reset=0)
 inbound = dict(remark='VLESS-XHTTP', enable=True, expiryTime=0, total=0,
-    listen='127.0.0.1', port=int(port), protocol='vless', tag='vless-xhttp',
+    listen='127.0.0.1', port=int(port), protocol='vless', tag='vless-xhttp-' + uid[:12],
     settings=dict(clients=[client], decryption='none', fallbacks=[]),
     streamSettings=dict(network='xhttp', security='none',
-                        externalProxy=[dict(dest=domain, port=443, forceTls='tls',
-                                            sni=domain, alpn=['http/1.1'], fingerprint='chrome')],
-                        xhttpSettings=dict(host=domain, path=path, mode='packet-up')),
+                        xhttpSettings=dict(host=domain, path=path, mode='auto')),
     sniffing=dict(enabled=True, destOverride=['http','tls'], routeOnly=True))
 Path(out).write_text(json.dumps(inbound), encoding='utf-8')
 PY_INBOUND
@@ -547,18 +733,70 @@ r = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
 if r.get('success') is not True:
     raise SystemExit('API не создала inbound: ' + str(r.get('msg')))
 PY_RESPONSE
-systemctl restart x-ui
+# A persistent Host belongs to the inbound, so future clients inherit the
+# public TLS endpoint instead of getting the private, unencrypted backend.
+python3 - "$WORK/added.json" "$DOMAIN" "$XHTTP_PATH" "$WORK/host.json" <<'PY_HOST'
+import json, sys
+from pathlib import Path
+response, domain, path, output = sys.argv[1:]
+r = json.loads(Path(response).read_text(encoding='utf-8'))
+inbound_id = r.get('obj', {}).get('id')
+if r.get('success') is not True or type(inbound_id) is not int or inbound_id < 1:
+    raise SystemExit('API не вернула ID созданного подключения')
+import os
+public_port = int(os.environ.get('PUBLIC_TLS_PORT', '443'))
+host = dict(inboundIds=[inbound_id], hosts=[domain], port=public_port, security='tls',
+            sni=domain, hostHeader=domain, path=path, alpn=['http/1.1'],
+            fingerprint='chrome', allowInsecure=False, isDisabled=False,
+            isHidden=False, remark='VLESS-XHTTP-TLS', sortOrder=0)
+Path(output).write_text(json.dumps(host), encoding='utf-8')
+print(inbound_id)
+PY_HOST
+curl -fsS --noproxy '*' --config "$WORK/curl-auth" --max-time 30 -H 'Content-Type: application/json' \
+  --data-binary "@$WORK/host.json" "$BASE/hosts/add" -o "$WORK/host-added.json"
+python3 - "$WORK/host-added.json" "$WORK/host.json" <<'PY_HOST_CHECK'
+import json, sys
+from pathlib import Path
+r, expected = [json.loads(Path(p).read_text(encoding='utf-8')) for p in sys.argv[1:]]
+if r.get('success') is not True or not isinstance(r.get('obj'), list):
+    raise SystemExit('Не удалось создать публичный TLS Host: ' + str(r.get('msg')))
+rows = r['obj']
+if len(rows) != 1:
+    raise SystemExit('Ожидался один публичный Host')
+h = rows[0]
+for key, value in dict(address=expected['hosts'][0], inboundId=expected['inboundIds'][0],
+                       port=expected['port'], security='tls', sni=expected['sni'],
+                       hostHeader=expected['hostHeader'], path=expected['path'],
+                       alpn=['http/1.1'], fingerprint='chrome').items():
+    if h.get(key) != value:
+        raise SystemExit('Неверный параметр публичного Host: ' + key)
+if h.get('isDisabled') or h.get('isHidden') or h.get('allowInsecure'):
+    raise SystemExit('Публичный Host отключён, скрыт или не проверяет сертификат')
+PY_HOST_CHECK
+if [[ "$INSTALL_MODE" == 1 ]]; then systemctl restart x-ui; fi
 STAGE=https
-cat >> /etc/nginx/sites-available/vless-installer <<EOF
+SITE_CSP="add_header Content-Security-Policy \"default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src https: data:; script-src 'none'; connect-src 'none'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'\" always;"
+# User-supplied static HTML may intentionally contain its own JS/CSS.
+if [[ "$SITE_MODE" == 3 ]]; then SITE_CSP=''; fi
+cat >> "$NGINX_SITE" <<EOF
 server {
-    listen 443 ssl http2;
+    listen $PUBLIC_TLS_PORT ssl http2;
     server_name $DOMAIN;
     ssl_certificate $CERT_FILE;
     ssl_certificate_key $KEY_FILE;
     ssl_protocols TLSv1.2 TLSv1.3;
     root $WEBROOT;
     index index.html;
+    # Override inherited real-IP trust: direct connections, DNS only.
+    set_real_ip_from 127.0.0.1;
+    set_real_ip_from ::1;
+    real_ip_header X-Forwarded-For;
     location ^~ $XHTTP_PATH {
+        satisfy all;
+        # Local health checks and the local reverse proxy remain trusted.
+        allow 127.0.0.1;
+        allow ::1;
+        $ACL
         proxy_pass http://127.0.0.1:$XRAY_PORT;
         proxy_http_version 1.1;
         proxy_set_header Host $DOMAIN;
@@ -571,11 +809,15 @@ server {
         access_log off;
     }
     location / {
-        add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src https: data:; script-src 'none'; connect-src 'none'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'" always;
+        allow all;
+        $SITE_CSP
         add_header X-Content-Type-Options nosniff always;
         try_files \$uri \$uri/ =404;
     }
 }
+EOF
+if [[ "$INSTALL_MODE" == 1 ]]; then
+cat >> "$NGINX_SITE" <<EOF
 server {
     listen $PUBLIC_PANEL_PORT ssl;
     server_name $DOMAIN;
@@ -598,24 +840,46 @@ server {
     location / { return 404; }
 }
 EOF
+fi
 if [[ -s /proc/net/if_inet6 ]]; then
-  sed -i '/listen 443 ssl http2;/a\    listen [::]:443 ssl http2;' /etc/nginx/sites-available/vless-installer
-  sed -i "/listen $PUBLIC_PANEL_PORT ssl;/a\\    listen [::]:$PUBLIC_PANEL_PORT ssl;" /etc/nginx/sites-available/vless-installer
+  sed -i "/listen $PUBLIC_TLS_PORT ssl http2;/a\\    listen [::]:$PUBLIC_TLS_PORT ssl http2;" "$NGINX_SITE"
+  if [[ "$INSTALL_MODE" == 1 ]]; then sed -i "/listen $PUBLIC_PANEL_PORT ssl;/a\\    listen [::]:$PUBLIC_PANEL_PORT ssl;" "$NGINX_SITE"; fi
 fi
 nginx -t
 systemctl reload nginx
 install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
-cat > /etc/letsencrypt/renewal-hooks/deploy/vless-nginx <<'HOOK'
+cat > "/etc/letsencrypt/renewal-hooks/deploy/$INSTANCE-nginx" <<'HOOK'
 #!/bin/sh
 set -e
 /usr/sbin/nginx -t
 /bin/systemctl reload nginx
 HOOK
-chmod 755 /etc/letsencrypt/renewal-hooks/deploy/vless-nginx
+chmod 755 "/etc/letsencrypt/renewal-hooks/deploy/$INSTANCE-nginx"
 systemctl enable --now certbot.timer
 STAGE=verification
-systemctl is-active --quiet nginx x-ui
-curl -fsS --noproxy '*' --max-time 15 --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" -o /dev/null
+systemctl is-active --quiet nginx x-ui "$INSTANCE-firewall.service"
+nft list chain inet "$NFT_TABLE" protect_xray > "$STATE/firewall-status.txt"
+curl -fsS --noproxy '*' --max-time 15 --resolve "$DOMAIN:$PUBLIC_TLS_PORT:127.0.0.1" "https://$DOMAIN:$PUBLIC_TLS_PORT/" -o /dev/null
+# Exercise the denied branch without relying on an external test machine.
+# 127.0.0.2 is not one of the two explicit local health-check exceptions.
+if python3 - "$WHITELIST" <<'PY_ACL_PROBE'
+import ipaddress, sys
+s = sys.argv[1].strip()
+if s == 'all':
+    raise SystemExit(1)
+probe = ipaddress.ip_address('127.0.0.2')
+if any(probe in ipaddress.ip_network(n.strip(), strict=False) for n in s.split(',')):
+    raise SystemExit(1)
+PY_ACL_PROBE
+then
+  DENIED_CODE=$(curl -sS --noproxy '*' --interface 127.0.0.2 --max-time 15 \
+    --resolve "$DOMAIN:$PUBLIC_TLS_PORT:127.0.0.1" -X OPTIONS \
+    "https://$DOMAIN:$PUBLIC_TLS_PORT$XHTTP_PATH" -o /dev/null -w '%{http_code}')
+  [[ "$DENIED_CODE" == 403 ]] || die "Белый список не прошёл тест: ожидался HTTP 403, получен $DENIED_CODE."
+  curl -fsS --noproxy '*' --interface 127.0.0.2 --max-time 15 \
+    --resolve "$DOMAIN:$PUBLIC_TLS_PORT:127.0.0.1" "https://$DOMAIN:$PUBLIC_TLS_PORT/" -o /dev/null
+  echo 'Проверено: IP вне списка получает 403 на VPN-пути, но открывает сайт.'
+fi
 # Wait for Xray, not only for the panel process.
 ready=0
 for ((n=0; n<30; n++)); do
@@ -628,19 +892,38 @@ import json, sys
 from pathlib import Path
 from urllib.parse import urlencode
 uid, domain, path, directory = sys.argv[1:]
+import os
+public_port = int(os.environ.get('PUBLIC_TLS_PORT', '443'))
 query = urlencode(dict(encryption='none', security='tls', sni=domain, fp='chrome',
-                       alpn='http/1.1', type='xhttp', host=domain, path=path, mode='packet-up'))
-link = f'vless://{uid}@{domain}:443?{query}#VLESS-XHTTP'
+                       alpn='http/1.1', type='xhttp', host=domain, path=path, mode='auto'))
+link = f'vless://{uid}@{domain}:{public_port}?{query}#VLESS-XHTTP'
 Path(directory, 'connection.txt').write_text(link+'\n', encoding='utf-8')
 client = dict(log=dict(loglevel='warning'), inbounds=[dict(listen='127.0.0.1', port=10808,
     protocol='socks', settings=dict(auth='noauth', udp=True))], outbounds=[dict(
-    protocol='vless', settings=dict(vnext=[dict(address=domain, port=443,
+    protocol='vless', settings=dict(vnext=[dict(address=domain, port=public_port,
         users=[dict(id=uid, encryption='none')])]), streamSettings=dict(network='xhttp',
     security='tls', tlsSettings=dict(serverName=domain, fingerprint='chrome', alpn=['http/1.1']),
-    xhttpSettings=dict(host=domain, path=path, mode='packet-up')))])
+    xhttpSettings=dict(host=domain, path=path, mode='auto')))])
 Path(directory, 'client.json').write_text(json.dumps(client, indent=2), encoding='utf-8')
 PY_CLIENT
-chmod 600 "$STATE"/*
+find "$STATE" -maxdepth 1 -type f ! -name apply-firewall.sh -exec chmod 600 {} +
+if [[ "$INSTALL_MODE" == 2 ]]; then
+  curl -fsS --noproxy '*' --config "$WORK/curl-auth" --max-time 15 "$BASE/inbounds/list" -o "$WORK/inbounds-after.json"
+  python3 - "$STATE/backup/inbounds.json" "$WORK/inbounds-after.json" <<'PY_PRESERVED'
+import json, sys
+from pathlib import Path
+before, after = [json.loads(Path(p).read_text(encoding='utf-8')) for p in sys.argv[1:]]
+if after.get('success') is not True or not isinstance(after.get('obj'), list):
+    raise SystemExit('Не удалось проверить сохранность прежних подключений')
+rows = {r['id']: r for r in after['obj']}
+keys = ('listen', 'port', 'protocol', 'tag', 'settings', 'streamSettings', 'sniffing')
+for old in before['obj']:
+    current = rows.get(old['id'])
+    if current is None or any(current.get(k) != old.get(k) for k in keys):
+        raise SystemExit('Прежнее подключение изменилось: ' + str(old['id']) + '. Проверьте панель и резервную копию.')
+print('Проверено: прежние подключения и их конфигурации сохранены.')
+PY_PRESERVED
+fi
 # Exercise the whole local chain: SOCKS -> VLESS/XHTTP -> Nginx TLS -> Xray -> Internet.
 python3 - "$STATE/client.json" "$WORK/test-client.json" "$WORK/test-port" <<'PY_TEST_CLIENT'
 import json, socket, sys
