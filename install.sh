@@ -286,22 +286,76 @@ if [[ -z "$ADMIN_IP" ]]; then
   if [[ "$WHO_LINE" =~ \(([^()]*)\) ]]; then ADMIN_IP=${BASH_REMATCH[1]}; fi
 fi
 echo ""
-echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 2: БЕЛЫЙ СПИСОК IP ДЛЯ ОГРАНИЧЕНИЯ ДОСТУПА ${CLR_CYAN}]───────────────────────${CLR_RESET}"
-echo -e "${CLR_CYAN}│ ${CLR_WHITE}Белый список ограничивает доступ к VPN и панели 3X-UI от посторонних.${CLR_RESET}"
-echo -e "${CLR_CYAN}│ ${CLR_GREEN}Сайт-прикрытие остаётся открытым для всего интернета и проверок!${CLR_RESET}"
-echo -e "${CLR_CYAN}│ ${CLR_YELLOW}Варианты настройки:${CLR_RESET}"
-echo -e "${CLR_CYAN}│   • Нажмите ${CLR_BOLD}[Enter]${CLR_RESET}${CLR_CYAN} — разрешить только ваш текущий IP: ${CLR_GREEN}${ADMIN_IP:-не определён}${CLR_RESET}"
-echo -e "${CLR_CYAN}│   • Введите ${CLR_BOLD}${CLR_MAGENTA}all${CLR_RESET}${CLR_CYAN} — открыть доступ со ВСЕХ IP (без белого списка, как обычный VPN)${CLR_RESET}"
-echo -e "${CLR_CYAN}│   • Введите IP через запятую (например: ${CLR_WHITE}1.2.3.4, 5.6.7.8/24${CLR_CYAN})${CLR_RESET}"
+echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 2: КОМУ РАЗРЕШИТЬ ПОДКЛЮЧЕНИЕ К VPN ${CLR_CYAN}]────────────────────────────${CLR_RESET}"
+echo -e "${CLR_CYAN}│ ${CLR_GREEN}Сайт-прикрытие остаётся открытым для всех при любом выборе.${CLR_RESET}"
+echo -e "${CLR_CYAN}│ ${CLR_WHITE}Выберите, с каких публичных IP можно пользоваться VPN:${CLR_RESET}"
+echo -e "${CLR_CYAN}│   ${CLR_GREEN}[1] Только с моего IP${CLR_WHITE} — ${CLR_GREEN}${ADMIN_IP:-ввести вручную}${CLR_WHITE} (по умолчанию)${CLR_RESET}"
+echo -e "${CLR_CYAN}│   ${CLR_YELLOW}[2] Свой белый список${CLR_WHITE} — указать IP или подсети через запятую${CLR_RESET}"
+echo -e "${CLR_CYAN}│   ${CLR_MAGENTA}[3] С любых IP${CLR_WHITE} — подключение доступно всем, у кого есть VPN-ссылка${CLR_RESET}"
+if [[ "$INSTALL_MODE" == 1 ]]; then
+  echo -e "${CLR_CYAN}│ ${CLR_WHITE}Выбранный список применяется также к новой панели 3X-UI.${CLR_RESET}"
+  echo -e "${CLR_CYAN}│ ${CLR_YELLOW}Пункт [3] открывает панель с любых IP; вход по логину и паролю сохраняется.${CLR_RESET}"
+else
+  echo -e "${CLR_CYAN}│ ${CLR_WHITE}Доступ к прежней панели и старым подключениям не меняется.${CLR_RESET}"
+fi
+echo -e "${CLR_CYAN}│ ${CLR_WHITE}Указывайте IP устройства до включения VPN. При смене IP обновите список.${CLR_RESET}"
 echo -e "${CLR_CYAN}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
 while true; do
-  ask WHITELIST "Разрешённые IP/CIDR (Enter — текущий IP, all — без ограничений) [${ADMIN_IP:-нужно ввести}]: "
-  WHITELIST=${WHITELIST:-$ADMIN_IP}
-  if [[ -z "$WHITELIST" ]]; then
-    echo -e "${CLR_YELLOW}Текущий IP невозможно определить (например, при запуске из консоли VPS). Введите публичный IP/CIDR вручную или явно укажите all.${CLR_RESET}"
-    continue
+  ask ACCESS_MODE 'Кому разрешить подключение к VPN [1]: '
+  ACCESS_MODE=${ACCESS_MODE:-1}
+  case "$ACCESS_MODE" in
+    1|2|3) break ;;
+    *) echo -e "${CLR_RED}Пожалуйста, введите 1, 2 или 3.${CLR_RESET}" ;;
+  esac
+done
+if [[ "$ACCESS_MODE" == 1 ]]; then
+  if CURRENT_IP=$(python3 - "$ADMIN_IP" <<'PY_CURRENT_IP'
+import ipaddress, sys
+try:
+    print(ipaddress.ip_address(sys.argv[1].strip()))
+except ValueError:
+    raise SystemExit('Текущий публичный IP не определён')
+PY_CURRENT_IP
+  ); then
+    WHITELIST=$CURRENT_IP
+  else
+    echo -e "${CLR_YELLOW}Текущий IP невозможно определить. Введите свой публичный IP вручную.${CLR_RESET}"
+    while true; do
+      ask CURRENT_IP 'Ваш публичный IP (без маски подсети): '
+      if WHITELIST=$(python3 - "$CURRENT_IP" <<'PY_MANUAL_IP'
+import ipaddress, sys
+try:
+    print(ipaddress.ip_address(sys.argv[1].strip()))
+except ValueError:
+    raise SystemExit('Введите один корректный IPv4 или IPv6 без маски подсети')
+PY_MANUAL_IP
+      ); then break; fi
+      echo -e "${CLR_RED}Некорректный IP. Повторите ввод.${CLR_RESET}"
+    done
   fi
-  if ACL=$(python3 - "$WHITELIST" <<'PY_ACL'
+elif [[ "$ACCESS_MODE" == 2 ]]; then
+  while true; do
+    ask CUSTOM_IPS 'Разрешённые IP/CIDR через запятую (например: 1.2.3.4, 5.6.7.8/24): '
+    if WHITELIST=$(python3 - "$CUSTOM_IPS" <<'PY_WHITELIST'
+import ipaddress, sys
+s = sys.argv[1].strip()
+if not s:
+    raise SystemExit('Введите хотя бы один публичный IP или CIDR')
+if s.lower() == 'all':
+    raise SystemExit('Здесь нужен список IP. Для доступа с любых IP выберите пункт 3 при запуске мастера.')
+try:
+    nets = [str(ipaddress.ip_network(x.strip(), strict=False)) for x in s.split(',')]
+except ValueError:
+    raise SystemExit('Некорректный IP или CIDR')
+print(','.join(dict.fromkeys(nets)))
+PY_WHITELIST
+    ); then break; fi
+    echo -e "${CLR_RED}Белый список не принят. Повторите ввод.${CLR_RESET}"
+  done
+else
+  WHITELIST=all
+fi
+ACL=$(python3 - "$WHITELIST" <<'PY_ACL'
 import ipaddress, sys
 s = sys.argv[1].strip()
 if s == 'all':
@@ -316,11 +370,14 @@ else:
     print('\n'.join('allow ' + n + ';' for n in nets))
     print('deny all;')
 PY_ACL
-  ); then break; fi
-  echo -e "${CLR_RED}┌─── [ ⚠️  ОШИБКА ФОРМАТА IP ]────────────────────────────────────────────────${CLR_RESET}"
-  echo -e "${CLR_RED}│ Некорректный IP или CIDR. Введите 'all' или валидный IP-адрес.${CLR_RESET}"
-  echo -e "${CLR_RED}└─────────────────────────────────────────────────────────────────────────────${CLR_RESET}"
-done
+)
+if [[ "$WHITELIST" == all ]]; then
+  echo -e "${CLR_YELLOW}[+] VPN доступен с любых IP при наличии правильной ссылки.${CLR_RESET}"
+else
+  echo -e "${CLR_GREEN}[+] VPN разрешён только с IP из списка: $WHITELIST${CLR_RESET}"
+  echo -e "${CLR_GREEN}[+] Ссылка сама по себе не даёт доступ с IP вне списка.${CLR_RESET}"
+fi
+echo -e "${CLR_GREEN}[+] Сайт остаётся доступным всем посетителям.${CLR_RESET}"
 echo ""
 echo -e "${CLR_CYAN}┌─── [${CLR_WHITE}${CLR_BOLD} ШАГ 3: САЙТ-ПРИКРЫТИЕ ДЛЯ МАСКИРОВКИ ${CLR_CYAN}]───────────────────────────────${CLR_RESET}"
 echo -e "${CLR_CYAN}│ ${CLR_WHITE}Выберите способ создания сайта на домене ${CLR_GREEN}$DOMAIN${CLR_RESET}:"
@@ -2096,7 +2153,11 @@ if [[ "$INSTALL_MODE" == 1 ]]; then
 echo -e "${CLR_YELLOW}│ ${CLR_WHITE}Логин:${CLR_RESET}          ${CLR_BOLD}${CLR_WHITE}$PANEL_USER_DISPLAY${CLR_RESET}"
 echo -e "${CLR_YELLOW}│ ${CLR_WHITE}Пароль:${CLR_RESET}         ${CLR_BOLD}${CLR_WHITE}$PANEL_PASS_DISPLAY${CLR_RESET}"
 echo -e "${CLR_YELLOW}│ ${CLR_WHITE}Белый список:${CLR_RESET}   ${CLR_CYAN}$WL_DISPLAY${CLR_RESET}"
+if [[ "$WHITELIST" == all ]]; then
+echo -e "${CLR_YELLOW}│ ${CLR_WHITE}Доступ к панели открыт с любых IP; требуется логин и пароль.${CLR_RESET}"
+else
 echo -e "${CLR_YELLOW}│ ${CLR_YELLOW}⚠️  ВАЖНО: Доступ к панели разрешён только с IP из белого списка!${CLR_RESET}"
+fi
 else
 echo -e "${CLR_YELLOW}│ ${CLR_WHITE}Прежние пользователи и настройки панели сохранены.${CLR_RESET}"
 fi
@@ -2105,6 +2166,11 @@ echo ""
 
 echo -e "${CLR_MAGENTA}┌─── [${CLR_WHITE}${CLR_BOLD} 🔑 ССЫЛКА ДЛЯ ПОДКЛЮЧЕНИЯ КЛИЕНТА (VLESS-XHTTP) ${CLR_MAGENTA}]──────────────${CLR_RESET}"
 echo -e "${CLR_MAGENTA}│ ${CLR_WHITE}Скопируйте эту ссылку целиком и вставьте в ваше VPN-приложение:${CLR_RESET}"
+if [[ "$WHITELIST" == all ]]; then
+echo -e "${CLR_MAGENTA}│ ${CLR_WHITE}Подключение разрешено с любых IP при наличии этой ссылки.${CLR_RESET}"
+else
+echo -e "${CLR_MAGENTA}│ ${CLR_WHITE}Подключение разрешено только с IP из списка: ${CLR_CYAN}$WL_DISPLAY${CLR_RESET}"
+fi
 if [[ $TUNNEL_VERIFIED != 1 ]]; then
 echo -e "${CLR_MAGENTA}│ ${CLR_YELLOW}⚠️  Не передавайте эту ссылку пользователям: сквозной тест не пройден.${CLR_RESET}"
 fi
